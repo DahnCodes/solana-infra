@@ -133,7 +133,10 @@ export function seedDemo(engine: MockEngine, now: UnixSeconds): void {
   engine.withdraw(at(user, 10 * M), tv.vault, usdc(20_000));
 
   // The guardian has seen the first large-withdrawal alert.
-  const first = engine.incidents.find((i) => i.detector === "large-withdrawal");
+  // Incidents are newest first, so the first alert is the last match.
+  const first = engine.incidents.findLast(
+    (i) => i.detector === "large-withdrawal",
+  );
   if (first) {
     first.status = "acked";
     first.acked_by = "guardian";

@@ -32,6 +32,26 @@ export function formatUnits(
   return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
 }
 
+/**
+ * Parses a typed decimal amount ("1,250.5") into base units, or null if it
+ * isn't a valid non-negative amount with at most `decimals` places.
+ */
+export function parseUnits(text: string, decimals: number): bigint | null {
+  const clean = text.replace(/[,\s]/g, "");
+  const match = /^(\d*)(?:\.(\d*))?$/.exec(clean);
+  if (!match || clean === "" || clean === ".") return null;
+  const [, whole = "", fraction = ""] = match;
+  if (fraction.length > decimals) return null;
+  return BigInt((whole || "0") + fraction.padEnd(decimals, "0"));
+}
+
+/** Shortens an address for display: "7xKp…3fQa". */
+export function shortAddress(address: string, chars = 4): string {
+  return address.length <= chars * 2 + 1
+    ? address
+    : `${address.slice(0, chars)}…${address.slice(-chars)}`;
+}
+
 const two = (n: number) => n.toString().padStart(2, "0");
 
 /**

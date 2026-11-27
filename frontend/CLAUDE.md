@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `2.3 Mock client`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `2.4 Data hooks`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -103,7 +103,8 @@ src/
 - **2.2** done: `BreakglassClient` in `src/lib/breakglass/client.ts` lists every read (clock, configs, pause state, limiters, token balance, holds, pending changes, guardian ledgers, test-vault position, events, incidents) and every write (all 14 non-CPI Breakglass instructions, test-vault `deposit`/`withdraw`, monitor `ackIncident`), plus `subscribe` for change notifications. Writes sign with the connected wallet and reject with `ClientError`. `check_scope`/`check_outflow` are CPI-only, reached through `withdraw` and `claimHeld`.
 - **2.3** done: `src/lib/breakglass/rules/` ports the program's limiter and pause logic line for line from the backend Rust (`limiter.rs`, `pause_logic.rs`, `gate.rs`, `check_outflow.rs`, `claim_held.rs` at `e52f9cd`); screens can use its read helpers (`windowUsage`, `bucketsOldestFirst`, `effectiveCap`, `isScopePaused`, `budgetLeft`, `cooldownEnds`, …). `mock/engine.ts` is a synchronous in-memory chain (every write atomic: a failed one changes nothing); `mock/client.ts` (`MockClient`) wraps it in `BreakglassClient` and adds `setWallet` (role switcher, `MOCK_WALLETS` in `mock/seed.ts`), `advanceClock`, `reset` and 350 ms latency. `mock/seed.ts` builds the demo state by replaying actions at past times. `getBreakglassClient()` / `getMockClient()` in `create-client.ts` pick by data mode. Timelocked changes follow our provisional reading of phase 4 (`releaseHeld` proposes a `releaseHeld` action; `cancelConfig` closes the account and emits no event).
 - Tests: `pnpm test` (Node's built-in runner, no extra dependency) runs `src/**/*.test.ts`; `pnpm check` now includes it. Files under `src/lib/breakglass` import each other with explicit `.ts` extensions (tsconfig `allowImportingTsExtensions`) so Node can run them, and must not use the `@/` alias.
-- Next step: **2.4**, data hooks that return mock data and refresh after each write (use `subscribe`).
+- **2.4** done: `src/hooks/use-client-query.ts` (`useClientQuery(key, read)`: reads in the browser only, re-reads on every client `subscribe` notification, keeps data while refreshing), `src/hooks/use-breakglass.ts` (one hook per read: `useProtocol`, `usePauseState`, `useFlowLimiters`, `useTokenBalance`, `useHolds`, `usePendingChanges`, `useGuardianLedger`, `usePosition`, `useEvents`, `useIncidents`, `useIncident`; plus `useChainNow` (cluster time, ticking, follows the mock clock), `useConnectedWallet`, `roleOf`, `useMockControls`), and `src/hooks/use-write.ts` (`useWrite` with pending and error state). No data library added. `/mock` is a temporary page that exercises them (wallet switcher, clock, withdraw, freeze, reject, claim, execute, veto); the dashboard (4.4) replaces it.
+- Next step: **3.1**, wallet connection (Phantom, Solflare, Backpack). It needs new dependencies (wallet adapter); ask first.
 
 ## The checklist
 
@@ -123,7 +124,7 @@ The checklist was first written when the product was imagined as a vault that ho
 | 2.1  | ✅     | TypeScript types for the program's accounts and events                                   | 0.3           | Types cover every account and event                                            | Must     |
 | 2.2  | ✅     | One client interface for every read and write                                            | 2.1           | The interface lists every instruction and read                                 | Must     |
 | 2.3  | ✅     | Mock client with in-memory state and a simulated clock                                   | 2.2           | Every interface method works in mock mode                                      | Must     |
-| 2.4  |        | Data hooks                                                                               | 2.3           | Hooks return mock data and refresh after each write                            | Must     |
+| 2.4  | ✅     | Data hooks                                                                               | 2.3           | Hooks return mock data and refresh after each write                            | Must     |
 | 3.1  |        | Wallet connection (Phantom, Solflare, Backpack)                                          | 0.1           | Connect and disconnect work on devnet                                          | Must     |
 | 3.2  |        | Devnet badge and wrong-network warning                                                   | 3.1           | Badge shows; warning appears on mainnet                                        | Must     |
 | 3.3  |        | Faucet helper for devnet SOL and test USDC                                               | 3.1           | A first-time judge can fund a wallet from the app                              | Must     |
