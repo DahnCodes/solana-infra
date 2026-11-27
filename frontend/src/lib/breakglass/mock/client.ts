@@ -20,6 +20,7 @@ import {
   ProtocolError,
   type Ctx,
   type TestVault,
+  walletTokenAccount,
 } from "./engine.ts";
 import { MOCK_WALLETS, seedDemo } from "./seed.ts";
 
@@ -131,6 +132,25 @@ export class MockClient implements BreakglassClient {
 
   get testVault(): TestVault {
     return this.options.testVault;
+  }
+
+  /**
+   * The test-token faucet: credits mock USDC to the connected wallet's token
+   * account, so a new wallet can deposit and withdraw at once.
+   */
+  async requestTestTokens(amount: bigint): Promise<void> {
+    await this.delay();
+    if (!this.wallet) {
+      throw clientError("Connect a wallet first.", {
+        errorName: "WalletNotConnected",
+      });
+    }
+    const account = walletTokenAccount(
+      this.wallet,
+      this.options.testVault.mint,
+    );
+    this.engine.balances.set(account, this.engine.balance(account) + amount);
+    this.notify();
   }
 
   // Plumbing ---------------------------------------------------------------------

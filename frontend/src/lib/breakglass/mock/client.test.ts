@@ -565,6 +565,31 @@ describe("setup on an empty chain", () => {
   });
 });
 
+describe("test-token faucet", () => {
+  it("funds a brand-new wallet so it can deposit", async () => {
+    const newcomer = "NewJudgeWa11et1111111111111111111111111111";
+    client.setWallet(newcomer);
+    await rejects(
+      client.deposit({ vault, amount: usdc(1) }),
+      "InsufficientFunds",
+    );
+    await client.requestTestTokens(usdc(10_000));
+    assert.equal(
+      await client.getTokenBalance(
+        walletTokenAccount(newcomer, TEST_VAULT.mint),
+      ),
+      usdc(10_000),
+    );
+    await client.deposit({ vault, amount: usdc(2_500) });
+    assert.equal(
+      (await client.getPosition(vault, newcomer))?.amount,
+      usdc(2_500),
+    );
+    client.setWallet(null);
+    await rejects(client.requestTestTokens(usdc(1)), "WalletNotConnected");
+  });
+});
+
 describe("monitor and change notifications", () => {
   it("acknowledges an incident", async () => {
     const [open] = await client.listIncidents("open");

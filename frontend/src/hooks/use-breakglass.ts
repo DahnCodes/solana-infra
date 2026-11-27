@@ -174,6 +174,7 @@ export function useMockControls() {
     setWallet: (address: Address | null) => mock.setWallet(address),
     advanceClock: (seconds: number) => mock.advanceClock(seconds),
     reset: () => mock.reset(),
+    requestTestTokens: (amount: bigint) => mock.requestTestTokens(amount),
     testVault: mock.testVault,
   };
 }

@@ -10,6 +10,7 @@ import { Dialog } from "@/components/dialog";
 import { InsetPanel } from "@/components/panel";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { shortAddress } from "@/lib/format";
+import { Faucet } from "./faucet";
 import { clearWalletError, useWalletError } from "./wallet-errors";
 
 /** The wallets we point people to when none is installed. */
@@ -225,6 +226,7 @@ function AccountDialog({
           )}
         </button>
       </InsetPanel>
+      <Faucet />
     </Dialog>
   );
 }
