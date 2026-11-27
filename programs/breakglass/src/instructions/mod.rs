@@ -1,22 +1,32 @@
 #![allow(ambiguous_glob_reexports)]
+pub mod cancel_config;
 pub mod check_outflow;
 pub mod check_scope;
 pub mod claim_held;
+pub mod execute_config;
 pub mod freeze_held;
 pub mod init_flow_limiter;
 pub mod initialize_config;
 pub mod pause;
+pub mod propose_config;
 pub mod reject_held;
 pub mod remove_guardian;
+pub mod tighten_limits;
 pub mod unpause;
+pub mod veto_config;
 
+pub use cancel_config::*;
 pub use check_outflow::*;
 pub use check_scope::*;
 pub use claim_held::*;
+pub use execute_config::*;
 pub use freeze_held::*;
 pub use init_flow_limiter::*;
 pub use initialize_config::*;
 pub use pause::*;
+pub use propose_config::*;
 pub use reject_held::*;
 pub use remove_guardian::*;
+pub use tighten_limits::*;
 pub use unpause::*;
+pub use veto_config::*;

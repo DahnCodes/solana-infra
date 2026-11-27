@@ -51,7 +51,7 @@ All accounts are owned by the Breakglass program. Seeds are UTF-8 strings. `u64`
 | `GuardianLedger` | `"gledger", config, guardian` | `findGuardianLedgerPda` | ✅ |
 | `FlowLimiter` | `"flow", config, mint` | `findFlowLimiterPda` | ✅ |
 | `PendingWithdrawal` | `"hold", config, owner, nonce(u64)` | `findPendingWithdrawalPda` | ✅ |
-| `PendingConfig` | `"cfgchg", config, id(u64)` | `findPendingConfigPda` | 🔜 P4 |
+| `PendingConfig` | `"cfgchg", config, id(u64)` | `findPendingConfigPda` | ✅ |
 
 Two PDAs that aren't Breakglass accounts also appear in transactions: the protected program's **gate signer** `["breakglass-gate"]` under the *protected* program (`findGateSignerPda`), and Breakglass's **event authority** `["__event_authority"]` (`findEventAuthorityPda`). `outflowAccounts()` derives all of them for one withdraw.
 
@@ -79,7 +79,15 @@ There is one entry per (scope, kind, `pausedBy`), so **one scope can have severa
 
 **`PendingWithdrawal`**: `bump`, `config`, `owner`, `mint`, `amount`, `nonce`, `createdAt`, `releaseAt`, `status: { queued } | { frozen } | { released } | { rejected } | { claimed }`, `scope`, `kind: { large } | { limit } | { screen }` (why it was held: size, a cap breach, or zero-loss screening). Claimable when the scope isn't paused and either `status` is `queued` with `now >= releaseAt`, or `status` is `released` (Phase 4). Accounts stay after they resolve, so history remains readable.
 
-**`PendingConfig`** (🔜 P4): `id`, `actionKind: u8`, `actionData: bytes`, `proposedAt`, `executableAt`, `vetoed`, `executed`. Phase 4 replaces `actionKind`/`actionData` with a typed enum (`RaiseLimits`, `AddGuardian`, `SetAdmin`, `ReleaseHeld`, `ChangePolicy`) and documents it here.
+**`PendingConfig`**: `bump`, `config`, `id`, `action: ConfigAction`, `proposedBy`, `proposedAt`, `executableAt`, `vetoed`, `executed`, `cancelled`. Ids count up from 0 per protocol (`config.nextChangeId` is the next one).
+- **State:** `cancelled` → cancelled. Else `executed` → done. Else `vetoed` → dead (can never run). Else `now < executableAt` → waiting (guardians can veto). Else ready: anyone can call `execute_config`.
+- **`ConfigAction`** (one-key object, like every Anchor enum):
+  - `{ raiseLimits: { mint, params: LimiterParams } }`: replace the limiter settings for `mint`, loosening allowed.
+  - `{ addGuardian: { guardian } }`
+  - `{ setAdmin: { admin } }`
+  - `{ releaseHeld: { hold } }`: a queued or frozen hold becomes `released`. It is claimable at once and not capped again.
+  - `{ changePolicy: { policy: PausePolicy, unpausableMask, timelockSecs } }`: `timelockSecs` must be 24h–48h, and a change already queued keeps its `executableAt`.
+- **`LimiterParams`**: `windowSecs`, `capAbsolute`, `capBpsOfVault`, `largeThreshold`, `largeThresholdBps`, `holdSecs`, `autoTripSecs`, `instantAllowance`, `screenSecs`. These are the FlowLimiter's settings without `scope` and `vault`, which never change. Start from the current limiter and change what you need.
 
 **Listing accounts:** use `program.account.<name>.all([{ memcmp: { offset: 8 + 1, bytes: config.toBase58() } }])` for accounts whose layout starts `bump, config` (`PauseState`, `FlowLimiter`, `PendingWithdrawal`, `GuardianLedger`, `PendingConfig`). Offset 8 skips the discriminator and 1 skips `bump`. For `PendingWithdrawal` by user, add a second memcmp at offset `8 + 1 + 32` for `owner`.
 
@@ -93,7 +101,7 @@ Who signs: **admin** (usually through a Squads multisig, so the frontend builds 
 
 | Instruction | Args | Signer | Accounts | Status |
 | --- | --- | --- | --- | --- |
-| `initialize_config` | `{ guardians: Pubkey[], unpausableMask: u64, timelockSecs: i64 \| null }` | payer + admin + the protected program's **upgrade authority** | `payer, admin, upgradeAuthority, protectedProgram, protectedProgramData` (ProgramData = PDA `[protectedProgram]` of `BPFLoaderUpgradeab1e11111111111111111111111`). Fails with `Unauthorized` if `upgradeAuthority` isn't the program's upgrade authority, so a program with no upgrade authority can't be registered. | ✅ |
+| `initialize_config` | `{ guardians: Pubkey[], unpausableMask: u64, timelockSecs: i64 \| null }` | payer + the protected program's **upgrade authority**. `admin` is just a pubkey (no signature), so it can be a Squads vault. | `payer, admin, upgradeAuthority, protectedProgram, protectedProgramData` (ProgramData = PDA `[protectedProgram]` of `BPFLoaderUpgradeab1e11111111111111111111111`). Fails with `Unauthorized` if `upgradeAuthority` isn't the program's upgrade authority (so a program with no upgrade authority can't be registered), or if `admin` is the default pubkey. | ✅ |
 | `check_scope` | `scope: u8` | CPI | `config, pauseState` | ✅ |
 | `pause` | `scopes: u64` (mask), `duration: i64` (seconds), `reason: u16` (free-form code) | guardian or admin (`authority`, also pays for its ledger on first use) | `authority, config, pauseState, guardianLedger` (ledger = `findGuardianLedgerPda(config, authority)`; `pauseAccounts()` builds all four) | ✅ |
 | `renew_pause` | `scopes: u64` | guardian or admin (`authority`) | same as `pause` | ✅ |
@@ -104,11 +112,12 @@ Who signs: **admin** (usually through a Squads multisig, so the frontend builds 
 | `claim_held` | none | CPI only (gate signer) + the hold's `owner` | `gateSigner, owner, config, pauseState, flowLimiter, vault, hold` + event accounts. Returns `Allow` (protocol pays out) or `Hold` (claim would cross the cap: scope auto-tripped, hold stays `queued`). Errors: `HoldNotReleased`, `HoldFrozen`, `HoldInvalidState`, `ScopePaused`. | ✅ |
 | `freeze_held` | none | guardian or admin (`authority`) | `authority, config, hold`. Only `queued` holds (`HoldInvalidState` otherwise). Frozen holds can never be claimed. | ✅ |
 | `reject_held` | none | admin + CPI (gate signer), i.e. through the protected program | `admin, gateSigner, config, hold` + event accounts. `queued`, `frozen` or `released` → `rejected`. The protocol returns the amount to the user's position in the same transaction. | ✅ |
-| `propose_config` | action | admin | config, pendingConfig | 🔜 P4 |
-| `execute_config` | | anyone, after `executableAt` | config, pendingConfig | 🔜 P4 |
-| `veto_config` | | guardian | config, pendingConfig | 🔜 P4 |
-| `cancel_config` | | admin | config, pendingConfig | 🔜 P4 |
-| `release_held` | hold | admin, through the timelock only | | 🔜 P4 |
+| `propose_config` | `action: ConfigAction` | admin + `payer` (pays rent; for Squads, both are the vault) | `payer, admin, config, pending` (`pending` = `findPendingConfigPda(config, config.nextChangeId)`) + event accounts. `executableAt = now + config.timelockSecs`. The action is validated now and again at execution: `DuplicateGuardian`, `TooManyGuardians`, `InvalidLimiterConfig`, `InvalidPolicy`, `InvalidTimelock`. | ✅ |
+| `execute_config` | none | anyone | `config, pending, flowLimiter, hold` + event accounts. `flowLimiter` (the mint's limiter) is required for `raiseLimits`, `hold` for `releaseHeld`. Pass `null` otherwise. Errors: `TimelockActive`, `Vetoed`, `ChangeClosed`, `WrongChangeAccounts`. | ✅ |
+| `veto_config` | none | a current guardian | `guardian, config, pending` + event accounts. Works any time until execution, even after `executableAt`. | ✅ |
+| `cancel_config` | none | admin | `admin, config, pending` + event accounts. Also allowed after a veto. | ✅ |
+| `tighten_limits` | `params: LimiterParams` | admin | `admin, config, flowLimiter` + event accounts. Applies **immediately** if every field is equal or stricter: lower caps, thresholds and instant allowance; longer window, holds, auto-trip and screening; a bps limit can be added or lowered, not removed. Otherwise `NotTightening`, so propose it instead. | ✅ |
+| release a hold | | admin, timelocked | There is no `release_held` instruction: use `propose_config({ releaseHeld: { hold } })`, then `execute_config` with `hold`. | ✅ |
 
 Planned args are indicative. The generated IDL is authoritative once the phase lands, and the phase updates this table to match it. `config` must always be passed explicitly: its seeds use its own `protectedProgram` field, so Anchor can't resolve it.
 
@@ -202,10 +211,12 @@ For a dashboard, prefer the monitor API (section 7). It dedupes across several R
 | `WithdrawalScreenQueued` | config, hold, mint, owner, amount, releaseAt | Held for screening (`kind: screen`, zero-loss mode: amount over `instantAllowance`) | ✅ |
 | `LimitTripped` | config, mint, scope, windowTotal, windowCap, pausedUntil | Cap breached, scope auto-paused until `pausedUntil` (admin-only unpause). `windowTotal` excludes the held amount. Always followed by `Paused` with `kind` 1, `by` = the limiter, `reason` 1. | ✅ |
 | `HoldFrozen` | config, hold, by | A guardian (or the admin) froze a hold | ✅ |
-| `HoldResolved` | config, hold, outcome (0 claimed, 1 released, 2 rejected) | 0 and 2 are live; 1 arrives with the Phase 4 timelocked release. A claim emits it before its `OutflowRecorded`. | ✅ |
-| `ConfigChangeProposed` | config, change, actionKind, executableAt | Timelocked change queued | 🔜 P4 |
-| `ConfigChangeExecuted` | config, change | | 🔜 P4 |
-| `ConfigChangeVetoed` | config, change, by | | 🔜 P4 |
+| `HoldResolved` | config, hold, outcome (0 claimed, 1 released, 2 rejected) | 1 comes from `execute_config(releaseHeld)` (the hold is then claimable). A claim emits it before its `OutflowRecorded`. | ✅ |
+| `ConfigChangeProposed` | config, change, actionKind (0 raiseLimits, 1 addGuardian, 2 setAdmin, 3 releaseHeld, 4 changePolicy; `ACTION_KIND`), executableAt | Timelocked change queued. Fetch `change` for the full action. | ✅ |
+| `ConfigChangeExecuted` | config, change | Applied | ✅ |
+| `ConfigChangeVetoed` | config, change, by | A guardian killed it | ✅ |
+| `ConfigChangeCancelled` | config, change | The admin withdrew it | ✅ |
+| `LimitsTightened` | config, flowLimiter, mint | The admin tightened a limiter at once (no timelock) | ✅ |
 
 ## 7. Monitor HTTP API (🔜 Phase 5, extended in Phase 6)
 
@@ -276,6 +287,11 @@ Anchor numbers custom errors from 6000 in declaration order. `errors.rs` is appe
 | 6023 | `InvalidLimiterConfig` | Limiter settings out of range. |
 | 6024 | `WrongVault` | Wrong vault account for this limiter. |
 | 6025 | `WrongHold` | Wrong held-withdrawal account (seeds, owner, mint or limiter). |
+| 6026 | `NotTightening` | This loosens a limit: propose it through the timelock. |
+| 6027 | `DuplicateGuardian` | Already a guardian. |
+| 6028 | `ChangeClosed` | That change was already executed or cancelled. |
+| 6029 | `WrongChangeAccounts` | Wrong or missing limiter/hold for this change. |
+| 6030 | `InvalidPolicy` | Pause policy values out of range. |
 
 A protected protocol has its own errors that also start at 6000, so check which program failed before mapping a code.
 

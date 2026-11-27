@@ -10,7 +10,8 @@ Helper and demo scripts that you run by hand against a local validator or devnet
 | `test-attack.sh` | 3 | `yarn test:attack`: full suite on the planted-bug build, then rebuilds the safe test-vault |
 | `gen-fixtures.js` | 2 | Regenerates `tests/fixtures/` (run with `node`, after `anchor keys sync`) |
 | `attack-big-drain.ts` | 3 | Planted bug can't drain the vault |
-| `demo-timelock.ts` | 4 | Proposals wait, early execute fails, guardian veto works |
+| `demo-timelock.ts` | 4 | Proposals wait, early execute fails, guardian veto works, tightening applies at once |
+| `squads-propose.ts` | 4 | `propose_config` through a Squads v4 multisig (devnet by default) |
 | `attack-screened.ts` | 6 | Guardian bot freezes attacker withdrawals |
 | `attacks/*.ts` | 7 | Full attack suite, `yarn test:attacks` |
 

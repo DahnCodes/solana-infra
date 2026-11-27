@@ -56,4 +56,15 @@ pub enum BreakglassError {
     WrongVault,
     #[msg("Hold account does not match its seeds, owner, mint or limiter")]
     WrongHold,
+    // Phase 4 (append only)
+    #[msg("Change loosens a limit; propose it through the timelock")]
+    NotTightening,
+    #[msg("Key is already a guardian")]
+    DuplicateGuardian,
+    #[msg("Pending change was already executed or cancelled")]
+    ChangeClosed,
+    #[msg("Accounts passed do not match the pending change")]
+    WrongChangeAccounts,
+    #[msg("Pause policy values out of range")]
+    InvalidPolicy,
 }

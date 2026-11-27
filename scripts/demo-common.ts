@@ -70,11 +70,17 @@ export async function setup() {
   );
 
   // Register test-vault with Breakglass (once per validator).
+  // A local demo guardian (gitignored under .anchor/), registered with the
+  // config so demos can veto and freeze. Adding one later takes the 48h timelock.
+  const guardian = loadOrCreateKeypair(
+    path.join(__dirname, "../.anchor/demo-guardian-keypair.json"),
+  );
+
   const existing = await bg.account.protocolConfig.fetchNullable(config);
   if (!existing) {
     await bg.methods
       .initializeConfig({
-        guardians: [],
+        guardians: [guardian.publicKey],
         unpausableMask: new BN(1).shln(REPAY),
         timelockSecs: null,
       })
@@ -247,6 +253,11 @@ export async function setup() {
   return {
     connection,
     payer,
+    guardian,
+    guardianRegistered: async () =>
+      (await bg.account.protocolConfig.fetch(config)).guardians.some((g) =>
+        g.equals(guardian.publicKey),
+      ),
     bg,
     vaultProgram,
     config,
@@ -254,6 +265,20 @@ export async function setup() {
     newVault,
     reopenWithdraw,
   };
+}
+
+function loadOrCreateKeypair(file: string): Keypair {
+  if (fs.existsSync(file)) {
+    return Keypair.fromSecretKey(
+      Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8"))),
+    );
+  }
+  const kp = Keypair.generate();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(Array.from(kp.secretKey)), {
+    mode: 0o600,
+  });
+  return kp;
 }
 
 export function run(main: () => Promise<void>) {

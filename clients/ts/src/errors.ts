@@ -29,6 +29,11 @@ export const BREAKGLASS_ERRORS = [
   { code: 6023, name: "InvalidLimiterConfig", msg: "Flow limiter parameters out of range" },
   { code: 6024, name: "WrongVault", msg: "Vault token account does not match the flow limiter" },
   { code: 6025, name: "WrongHold", msg: "Hold account does not match its seeds, owner, mint or limiter" },
+  { code: 6026, name: "NotTightening", msg: "Change loosens a limit; propose it through the timelock" },
+  { code: 6027, name: "DuplicateGuardian", msg: "Key is already a guardian" },
+  { code: 6028, name: "ChangeClosed", msg: "Pending change was already executed or cancelled" },
+  { code: 6029, name: "WrongChangeAccounts", msg: "Accounts passed do not match the pending change" },
+  { code: 6030, name: "InvalidPolicy", msg: "Pause policy values out of range" },
 ] as const;
 
 export type BreakglassErrorName = (typeof BREAKGLASS_ERRORS)[number]["name"];

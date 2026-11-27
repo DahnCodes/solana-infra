@@ -6,6 +6,7 @@
 
 use anchor_lang::prelude::*;
 
+pub mod config_logic;
 pub mod constants;
 pub mod errors;
 pub mod events;
@@ -16,7 +17,7 @@ pub mod pause_logic;
 pub mod state;
 
 use instructions::*;
-use state::Decision;
+use state::{ConfigAction, Decision, LimiterParams};
 
 declare_id!("AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB");
 
@@ -92,6 +93,30 @@ pub mod breakglass {
         instructions::reject_held::handler(ctx)
     }
 
-    // Phase 4: propose_config, execute_config, veto_config, cancel_config, release_held (timelocked)
+    /// Admin queues a timelocked change (raise limits, add a guardian, set
+    /// admin, release a hold, change policy). Phase 4.
+    pub fn propose_config(ctx: Context<ProposeConfig>, action: ConfigAction) -> Result<()> {
+        instructions::propose_config::handler(ctx, action)
+    }
+
+    /// Anyone runs a pending change after its timelock, unless vetoed or cancelled. Phase 4.
+    pub fn execute_config(ctx: Context<ExecuteConfig>) -> Result<()> {
+        instructions::execute_config::handler(ctx)
+    }
+
+    /// A guardian vetoes a pending change. Phase 4.
+    pub fn veto_config(ctx: Context<VetoConfig>) -> Result<()> {
+        instructions::veto_config::handler(ctx)
+    }
+
+    /// The admin cancels a pending change. Phase 4.
+    pub fn cancel_config(ctx: Context<CancelConfig>) -> Result<()> {
+        instructions::cancel_config::handler(ctx)
+    }
+
+    /// The admin tightens a limiter immediately (no timelock). Phase 4.
+    pub fn tighten_limits(ctx: Context<TightenLimits>, params: LimiterParams) -> Result<()> {
+        instructions::tighten_limits::handler(ctx, params)
+    }
     // See docs/BUILD_PLAN.md.
 }

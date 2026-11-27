@@ -1,6 +1,6 @@
 //! Account layouts. See docs/SPEC.md "Accounts (PDAs)".
-//! ProtocolConfig, PauseState, GuardianLedger (Phase 1), FlowLimiter and
-//! PendingWithdrawal (Phase 2) are live. PendingConfig is wired up in Phase 4.
+//! All accounts are live: ProtocolConfig, PauseState, GuardianLedger (Phase 1),
+//! FlowLimiter, PendingWithdrawal (Phase 2), PendingConfig (Phase 4).
 
 use anchor_lang::prelude::*;
 
@@ -191,18 +191,74 @@ pub struct GuardianLedger {
     pub last_pause_end: i64,
 }
 
-/// PDA ["cfgchg", config, id]. Wired up in Phase 4; the action enum lands then.
+/// Every FlowLimiter setting an admin can change (after `init_flow_limiter`).
+/// Loosening goes through `propose_config(RaiseLimits)`; a change where every
+/// field is equal or stricter applies at once through `tighten_limits`.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub struct LimiterParams {
+    pub window_secs: i64,
+    pub cap_absolute: u64,
+    pub cap_bps_of_vault: u16,
+    pub large_threshold: u64,
+    pub large_threshold_bps: u16,
+    pub hold_secs: i64,
+    pub auto_trip_secs: i64,
+    pub instant_allowance: u64,
+    pub screen_secs: i64,
+}
+
+/// A timelocked change. Anything that loosens protection or releases funds.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub enum ConfigAction {
+    /// Replace the limiter settings for `mint` (any change, including loosening).
+    RaiseLimits {
+        mint: Pubkey,
+        params: LimiterParams,
+    },
+    AddGuardian {
+        guardian: Pubkey,
+    },
+    SetAdmin {
+        admin: Pubkey,
+    },
+    /// Mark a queued or frozen hold Released: claimable at once, not capped again.
+    ReleaseHeld {
+        hold: Pubkey,
+    },
+    /// Replace the pause policy, unpausable scopes and timelock length.
+    ChangePolicy {
+        policy: PausePolicy,
+        unpausable_mask: u64,
+        timelock_secs: i64,
+    },
+}
+
+impl ConfigAction {
+    /// Code used in the `ConfigChangeProposed.action_kind` event field.
+    pub fn kind(&self) -> u8 {
+        match self {
+            ConfigAction::RaiseLimits { .. } => 0,
+            ConfigAction::AddGuardian { .. } => 1,
+            ConfigAction::SetAdmin { .. } => 2,
+            ConfigAction::ReleaseHeld { .. } => 3,
+            ConfigAction::ChangePolicy { .. } => 4,
+        }
+    }
+}
+
+/// PDA ["cfgchg", config, id]. Created by `propose_config`; executable by
+/// anyone at `executable_at` unless vetoed (guardian) or cancelled (admin).
 #[account]
 #[derive(InitSpace)]
 pub struct PendingConfig {
     pub bump: u8,
     pub config: Pubkey,
     pub id: u64,
-    pub action_kind: u8,
-    #[max_len(256)]
-    pub action_data: Vec<u8>,
+    pub action: ConfigAction,
+    pub proposed_by: Pubkey,
     pub proposed_at: i64,
     pub executable_at: i64,
     pub vetoed: bool,
     pub executed: bool,
+    pub cancelled: bool,
 }

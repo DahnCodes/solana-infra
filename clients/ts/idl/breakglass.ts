@@ -14,6 +14,118 @@ export type Breakglass = {
   },
   "instructions": [
     {
+      "name": "cancelConfig",
+      "docs": [
+        "The admin cancels a pending change. Phase 4."
+      ],
+      "discriminator": [
+        91,
+        124,
+        207,
+        75,
+        179,
+        108,
+        227,
+        13
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "protocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "pending"
+          ]
+        },
+        {
+          "name": "pending",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  102,
+                  103,
+                  99,
+                  104,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pending.id",
+                "account": "pendingConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "eventAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "checkOutflow",
       "docs": [
         "The outflow gate. CPI from the protected program's gate PDA. Returns",
@@ -440,6 +552,122 @@ export type Breakglass = {
       }
     },
     {
+      "name": "executeConfig",
+      "docs": [
+        "Anyone runs a pending change after its timelock, unless vetoed or cancelled. Phase 4."
+      ],
+      "discriminator": [
+        189,
+        36,
+        99,
+        231,
+        117,
+        10,
+        8,
+        134
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "protocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "pending"
+          ]
+        },
+        {
+          "name": "pending",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  102,
+                  103,
+                  99,
+                  104,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pending.id",
+                "account": "pendingConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "flowLimiter",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "hold",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "eventAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "freezeHeld",
       "docs": [
         "Guardian (or admin) freezes a queued hold. Phase 2."
@@ -672,9 +900,9 @@ export type Breakglass = {
         {
           "name": "admin",
           "docs": [
-            "The protocol admin (can be a Squads vault PDA signing via the multisig)."
-          ],
-          "signer": true
+            "It doesn't sign here: the upgrade authority below authorizes the",
+            "registration, so a multisig vault can be named admin directly."
+          ]
         },
         {
           "name": "upgradeAuthority",
@@ -979,6 +1207,135 @@ export type Breakglass = {
         {
           "name": "reason",
           "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "proposeConfig",
+      "docs": [
+        "Admin queues a timelocked change (raise limits, add a guardian, set",
+        "admin, release a hold, change policy). Phase 4."
+      ],
+      "discriminator": [
+        163,
+        247,
+        238,
+        160,
+        236,
+        129,
+        153,
+        160
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "protocolConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pending",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  102,
+                  103,
+                  99,
+                  104,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "config.next_change_id",
+                "account": "protocolConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "eventAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "action",
+          "type": {
+            "defined": {
+              "name": "configAction"
+            }
+          }
         }
       ]
     },
@@ -1331,6 +1688,125 @@ export type Breakglass = {
       ]
     },
     {
+      "name": "tightenLimits",
+      "docs": [
+        "The admin tightens a limiter immediately (no timelock). Phase 4."
+      ],
+      "discriminator": [
+        64,
+        255,
+        167,
+        150,
+        242,
+        33,
+        143,
+        144
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "protocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "flowLimiter"
+          ]
+        },
+        {
+          "name": "flowLimiter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  108,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "flow_limiter.mint",
+                "account": "flowLimiter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "eventAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "limiterParams"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "unpause",
       "docs": [
         "Lift pauses early. Admin: any. Guardian: only its own. Phase 1."
@@ -1437,6 +1913,115 @@ export type Breakglass = {
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "vetoConfig",
+      "docs": [
+        "A guardian vetoes a pending change. Phase 4."
+      ],
+      "discriminator": [
+        222,
+        91,
+        78,
+        34,
+        15,
+        41,
+        55,
+        161
+      ],
+      "accounts": [
+        {
+          "name": "guardian",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "protocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "pending"
+          ]
+        },
+        {
+          "name": "pending",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  102,
+                  103,
+                  99,
+                  104,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pending.id",
+                "account": "pendingConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "eventAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1480,6 +2065,19 @@ export type Breakglass = {
       ]
     },
     {
+      "name": "pendingConfig",
+      "discriminator": [
+        109,
+        48,
+        178,
+        191,
+        125,
+        67,
+        26,
+        70
+      ]
+    },
+    {
       "name": "pendingWithdrawal",
       "discriminator": [
         61,
@@ -1507,6 +2105,19 @@ export type Breakglass = {
     }
   ],
   "events": [
+    {
+      "name": "configChangeCancelled",
+      "discriminator": [
+        66,
+        48,
+        129,
+        141,
+        104,
+        33,
+        113,
+        2
+      ]
+    },
     {
       "name": "configChangeExecuted",
       "discriminator": [
@@ -1635,6 +2246,19 @@ export type Breakglass = {
         240,
         108,
         231
+      ]
+    },
+    {
+      "name": "limitsTightened",
+      "discriminator": [
+        223,
+        134,
+        148,
+        84,
+        89,
+        74,
+        42,
+        133
       ]
     },
     {
@@ -1833,9 +2457,126 @@ export type Breakglass = {
       "code": 6025,
       "name": "wrongHold",
       "msg": "Hold account does not match its seeds, owner, mint or limiter"
+    },
+    {
+      "code": 6026,
+      "name": "notTightening",
+      "msg": "Change loosens a limit; propose it through the timelock"
+    },
+    {
+      "code": 6027,
+      "name": "duplicateGuardian",
+      "msg": "Key is already a guardian"
+    },
+    {
+      "code": 6028,
+      "name": "changeClosed",
+      "msg": "Pending change was already executed or cancelled"
+    },
+    {
+      "code": 6029,
+      "name": "wrongChangeAccounts",
+      "msg": "Accounts passed do not match the pending change"
+    },
+    {
+      "code": 6030,
+      "name": "invalidPolicy",
+      "msg": "Pause policy values out of range"
     }
   ],
   "types": [
+    {
+      "name": "configAction",
+      "docs": [
+        "A timelocked change. Anything that loosens protection or releases funds."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "raiseLimits",
+            "fields": [
+              {
+                "name": "mint",
+                "type": "pubkey"
+              },
+              {
+                "name": "params",
+                "type": {
+                  "defined": {
+                    "name": "limiterParams"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "addGuardian",
+            "fields": [
+              {
+                "name": "guardian",
+                "type": "pubkey"
+              }
+            ]
+          },
+          {
+            "name": "setAdmin",
+            "fields": [
+              {
+                "name": "admin",
+                "type": "pubkey"
+              }
+            ]
+          },
+          {
+            "name": "releaseHeld",
+            "fields": [
+              {
+                "name": "hold",
+                "type": "pubkey"
+              }
+            ]
+          },
+          {
+            "name": "changePolicy",
+            "fields": [
+              {
+                "name": "policy",
+                "type": {
+                  "defined": {
+                    "name": "pausePolicy"
+                  }
+                }
+              },
+              {
+                "name": "unpausableMask",
+                "type": "u64"
+              },
+              {
+                "name": "timelockSecs",
+                "type": "i64"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "configChangeCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "config",
+            "type": "pubkey"
+          },
+          {
+            "name": "change",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
     {
       "name": "configChangeExecuted",
       "type": {
@@ -2404,6 +3145,78 @@ export type Breakglass = {
       }
     },
     {
+      "name": "limiterParams",
+      "docs": [
+        "Every FlowLimiter setting an admin can change (after `init_flow_limiter`).",
+        "Loosening goes through `propose_config(RaiseLimits)`; a change where every",
+        "field is equal or stricter applies at once through `tighten_limits`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "windowSecs",
+            "type": "i64"
+          },
+          {
+            "name": "capAbsolute",
+            "type": "u64"
+          },
+          {
+            "name": "capBpsOfVault",
+            "type": "u16"
+          },
+          {
+            "name": "largeThreshold",
+            "type": "u64"
+          },
+          {
+            "name": "largeThresholdBps",
+            "type": "u16"
+          },
+          {
+            "name": "holdSecs",
+            "type": "i64"
+          },
+          {
+            "name": "autoTripSecs",
+            "type": "i64"
+          },
+          {
+            "name": "instantAllowance",
+            "type": "u64"
+          },
+          {
+            "name": "screenSecs",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "limitsTightened",
+      "docs": [
+        "The admin tightened a limiter immediately (no timelock needed)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "config",
+            "type": "pubkey"
+          },
+          {
+            "name": "flowLimiter",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
       "name": "outflowRecorded",
       "type": {
         "kind": "struct",
@@ -2569,6 +3382,62 @@ export type Breakglass = {
           {
             "name": "reason",
             "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pendingConfig",
+      "docs": [
+        "PDA [\"cfgchg\", config, id]. Created by `propose_config`; executable by",
+        "anyone at `executable_at` unless vetoed (guardian) or cancelled (admin)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "config",
+            "type": "pubkey"
+          },
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "action",
+            "type": {
+              "defined": {
+                "name": "configAction"
+              }
+            }
+          },
+          {
+            "name": "proposedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "proposedAt",
+            "type": "i64"
+          },
+          {
+            "name": "executableAt",
+            "type": "i64"
+          },
+          {
+            "name": "vetoed",
+            "type": "bool"
+          },
+          {
+            "name": "executed",
+            "type": "bool"
+          },
+          {
+            "name": "cancelled",
+            "type": "bool"
           }
         ]
       }

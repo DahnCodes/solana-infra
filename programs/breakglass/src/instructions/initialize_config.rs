@@ -16,8 +16,11 @@ pub struct InitializeConfig<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// The protocol admin (can be a Squads vault PDA signing via the multisig).
-    pub admin: Signer<'info>,
+    /// CHECK: the protocol admin, a plain pubkey (typically a Squads vault PDA).
+    /// It doesn't sign here: the upgrade authority below authorizes the
+    /// registration, so a multisig vault can be named admin directly.
+    #[account(constraint = admin.key() != Pubkey::default() @ BreakglassError::Unauthorized)]
+    pub admin: UncheckedAccount<'info>,
 
     /// The protected program's upgrade authority. Only it can register the
     /// program, so nobody can squat a protocol's config PDA and become its admin.

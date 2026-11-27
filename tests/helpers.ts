@@ -517,3 +517,97 @@ export async function chainNow(): Promise<number> {
 export async function waitPast(t: number) {
   while ((await chainNow()) <= t) await new Promise((r) => setTimeout(r, 400));
 }
+
+// ---- timelocked config changes (Phase 4) ----------------------------------
+
+export function pendingPda(id: BN | number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("cfgchg"),
+      configPda.toBuffer(),
+      new BN(id).toArrayLike(Buffer, "le", 8),
+    ],
+    breakglass.programId,
+  )[0];
+}
+
+/** Propose `action` (a ConfigAction in Anchor's enum form) as `signer`. */
+export async function propose(signer: Keypair, action: any) {
+  const id = (await breakglass.account.protocolConfig.fetch(configPda))
+    .nextChangeId;
+  const pending = pendingPda(id);
+  const sig = await breakglass.methods
+    .proposeConfig(action)
+    .accountsPartial({
+      payer: signer.publicKey,
+      admin: signer.publicKey,
+      config: configPda,
+      pending,
+    })
+    .signers(signer === admin ? [] : [signer])
+    .rpc({ commitment: "confirmed" });
+  return { sig, pending };
+}
+
+export function executeChange(
+  pending: PublicKey,
+  extra: { flowLimiter?: PublicKey; hold?: PublicKey } = {},
+) {
+  return breakglass.methods
+    .executeConfig()
+    .accountsPartial({
+      config: configPda,
+      pending,
+      flowLimiter: extra.flowLimiter ?? null,
+      hold: extra.hold ?? null,
+    })
+    .rpc({ commitment: "confirmed" });
+}
+
+export function vetoChange(signer: Keypair, pending: PublicKey) {
+  return breakglass.methods
+    .vetoConfig()
+    .accountsPartial({ guardian: signer.publicKey, config: configPda, pending })
+    .signers([signer])
+    .rpc({ commitment: "confirmed" });
+}
+
+export function cancelChange(signer: Keypair, pending: PublicKey) {
+  return breakglass.methods
+    .cancelConfig()
+    .accountsPartial({ admin: signer.publicKey, config: configPda, pending })
+    .signers(signer === admin ? [] : [signer])
+    .rpc({ commitment: "confirmed" });
+}
+
+/** The current settings of a limiter, as `LimiterParams`. */
+export async function limiterSettings(limiter: PublicKey) {
+  const l = await breakglass.account.flowLimiter.fetch(limiter);
+  return {
+    windowSecs: l.windowSecs,
+    capAbsolute: l.capAbsolute,
+    capBpsOfVault: l.capBpsOfVault,
+    largeThreshold: l.largeThreshold,
+    largeThresholdBps: l.largeThresholdBps,
+    holdSecs: l.holdSecs,
+    autoTripSecs: l.autoTripSecs,
+    instantAllowance: l.instantAllowance,
+    screenSecs: l.screenSecs,
+  };
+}
+
+export function tightenLimits(
+  signer: Keypair,
+  limiter: PublicKey,
+  params: any,
+) {
+  return breakglass.methods
+    .tightenLimits(params)
+    .accountsPartial({
+      admin: signer.publicKey,
+      config: configPda,
+      flowLimiter: limiter,
+    })
+    .signers(signer === admin ? [] : [signer])
+    .rpc({ commitment: "confirmed" });
+}

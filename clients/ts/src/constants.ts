@@ -76,5 +76,14 @@ export const DEFAULT_INSTANT_ALLOWANCE = "18446744073709551615";
 /** `Paused.reason` written by an auto-trip (`Paused.kind` 1). */
 export const AUTO_TRIP_REASON = 1;
 
+/** `ConfigChangeProposed.actionKind` values (the `ConfigAction` variant). */
+export const ACTION_KIND = {
+  raiseLimits: 0,
+  addGuardian: 1,
+  setAdmin: 2,
+  releaseHeld: 3,
+  changePolicy: 4,
+} as const;
+
 /** HoldResolved.outcome values. */
 export const HOLD_OUTCOME = { claimed: 0, released: 1, rejected: 2 } as const;

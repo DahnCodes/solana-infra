@@ -125,6 +125,20 @@ pub struct ConfigChangeExecuted {
 }
 
 #[event]
+pub struct ConfigChangeCancelled {
+    pub config: Pubkey,
+    pub change: Pubkey,
+}
+
+/// The admin tightened a limiter immediately (no timelock needed).
+#[event]
+pub struct LimitsTightened {
+    pub config: Pubkey,
+    pub flow_limiter: Pubkey,
+    pub mint: Pubkey,
+}
+
+#[event]
 pub struct ConfigChangeVetoed {
     pub config: Pubkey,
     pub change: Pubkey,

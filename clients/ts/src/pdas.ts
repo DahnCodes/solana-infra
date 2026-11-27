@@ -86,7 +86,7 @@ export function findEventAuthorityPda(breakglassProgramId: PublicKey): [PublicKe
   return PublicKey.findProgramAddressSync([enc("__event_authority")], breakglassProgramId);
 }
 
-/** ["cfgchg", config, id_u64_le] (Phase 4) */
+/** ["cfgchg", config, id_u64_le]: a timelocked change. The next id is `config.nextChangeId`. */
 export function findPendingConfigPda(
   breakglassProgramId: PublicKey,
   config: PublicKey,

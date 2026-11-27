@@ -8,7 +8,7 @@ Claude Code updates this file at the end of every phase (see docs/BUILD_PLAN.md)
 | 1 Config, roles, pauses | Done (2026-11-27) | `cargo test -p breakglass` (20 passing), `anchor test` (12 passing), `yarn ts-node scripts/demo-pause.ts` | See Phase 1 notes |
 | 2 Outflow gate and holds | Done (2026-11-27) | `cargo test -p breakglass` (33 passing), `anchor test` (31 passing), `yarn ts-node scripts/demo-outflow.ts` | See Phase 2 notes |
 | 3 Zero-loss mode | Done (2026-11-27) | `cargo test -p breakglass-sdk` (8 passing), `anchor test` (33 passing), `yarn test:attack` (34 passing on the planted-bug build), `yarn ts-node scripts/attack-big-drain.ts` | See Phase 3 notes |
-| 4 Timelocks | Not started | | |
+| 4 Timelocks | Done (2026-11-27) | `cargo test -p breakglass` (43 passing), `anchor test` (48 passing incl. 7 LiteSVM clock-warp tests), `yarn ts-node scripts/demo-timelock.ts` | See Phase 4 notes |
 | 5 Monitor v1 | Not started | | |
 | 6 Guardian bot and screening | Not started | | |
 | 7 Attack suite and CI | Not started | | |
@@ -164,10 +164,76 @@ Against the safe build the same script prints `transaction reverted: Insufficien
 - `reject_held` and `deposit` don't run the invariants. Neither moves funds out (a reject moves held → position inside the protocol). Worth adding when protocols with fees or shares integrate.
 
 
+## Phase 4 notes
+
+**Built:**
+- **`PendingConfig`** now holds a typed `ConfigAction`: `RaiseLimits { mint, params }`, `AddGuardian`, `SetAdmin`, `ReleaseHeld { hold }`, `ChangePolicy { policy, unpausable_mask, timelock_secs }`. It also records `proposed_by` and a `cancelled` flag.
+- **Instructions:**
+  - `propose_config` (admin; separate `payer`)
+  - `execute_config` (anyone, after `executable_at`; optional `flow_limiter` / `hold` accounts)
+  - `veto_config` (guardian)
+  - `cancel_config` (admin)
+  - `tighten_limits` (admin, immediate, only if every field is equal or stricter)
+- **Release:** "release_held" is the `ReleaseHeld` action. `execute_config` marks the hold Released and emits `HoldResolved(1)`. The existing `claim_held` then pays it out without a cap check.
+- **Timelock:** 24–48h, default 48h, in `config.timelock_secs` (changed only by a timelocked `ChangePolicy`).
+- **Tightening applies at once:** lower caps and thresholds through `tighten_limits`; removing a guardian (`remove_guardian`, Phase 1).
+- **`initialize_config`:** `admin` is a plain pubkey (no signature), so a Squads vault PDA can be named admin directly. The upgrade authority's signature authorizes the registration.
+- **Rules as pure functions** in `config_logic.rs`, with 10 unit tests: what counts as tightening, applying limiter params (a window change folds the counted total into the newest bucket, so it never under-counts), policy validation, and the executable-state order closed → vetoed → timelock.
+- **Events:** `ConfigChangeProposed`, `ConfigChangeExecuted`, `ConfigChangeVetoed`, plus new `ConfigChangeCancelled` and `LimitsTightened`. Errors 6026–6030 appended.
+- **Tests:**
+  - `tests/timelock.ts` (validator): queueing, early execute `TimelockActive`, veto, cancel, immediate tightening, `NotTightening`, frozen hold not releasable early, a stranger or guardian can't propose, bad proposals.
+  - `tests/timelock-warp.ts` runs the same `.so` files in **LiteSVM** with the clock moved 48h. It covers execute after the timelock, a vetoed change still dead after the delay, cancel, frozen hold → timelocked release → claim pays out, AddGuardian, ChangePolicy (24h timelock applies to later proposals), and SetAdmin (the old admin loses power).
+- **Scripts:**
+  - `scripts/demo-timelock.ts` (manual check).
+  - `scripts/squads-propose.ts` runs `propose_config` through a Squads v4 multisig: it creates a 1-of-1 multisig (or reuses `SQUADS_MULTISIG`), registers test-vault with the Squads vault as admin, and sends `propose_config(AddGuardian)` as a Squads vault transaction (create, approve, execute).
+  - `demo-common.ts` registers a local demo guardian (`.anchor/demo-guardian-keypair.json`, gitignored).
+- **Fixed:** the Phase 3 commit had dropped the `## Decisions` heading of this file (the decisions list sat under "Phase 3 notes"). It's restored.
+
+**Test commands:**
+```bash
+cargo test -p breakglass                 # 43 passing
+cargo test -p breakglass-sdk             # 8 passing
+anchor test                              # 48 passing (validator + LiteSVM)
+yarn test:attack                         # planted-bug build
+# manual check
+solana-test-validator --reset            # terminal 1
+anchor deploy                            # terminal 2
+yarn ts-node scripts/demo-timelock.ts
+# 1. proposal QUEUED: raise cap 1000 -> 5000 tokens (change <pda>), executable at <time> (48h)
+# 2. early execute rejected: TimelockActive
+# 3. guardian VETOED it; execute now fails with: Vetoed
+# 4. cap LOWERED at once: 800 tokens (no timelock for tightening)
+# Squads (devnet; needs Breakglass + test-vault deployed there and a little SOL)
+ANCHOR_PROVIDER_URL=https://api.devnet.solana.com yarn ts-node scripts/squads-propose.ts
+```
+The demo validator must be fresh (`--reset`) so test-vault is registered with the demo guardian. `squads-propose.ts` was verified on a local validator that clones the real Squads v4 program and its program config from devnet (`solana-test-validator --url devnet --clone-upgradeable-program SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf --clone BSTq9w3kZwNwpBXJEvTZz2G9ZTNyKBvoSeXMvwb4cNZr`). It ran twice: once creating a multisig, once reusing it. It has not been run on devnet itself.
+
+**New dev dependencies (pinned):** `litesvm@0.3.3` and `anchor-litesvm@0.2.1` (in-process runtime with a settable clock, web3.js 1.x, `@coral-xyz/anchor` ^0.31.1), and `@sqds/multisig@2.1.4`. The root `tsconfig.json` targets ES2020 so tests and scripts can use `bigint` (Squads transaction indexes). Node 20+ has it.
+
+**Open issue for the human:** `remove_guardian` is immediate by spec. So a stolen admin key can remove every guardian *first* and then propose: nobody is left to veto, and only the timelock delay plus monitor alerts (`GuardianRemoved`, `ConfigChangeProposed`) stand in the way. Options:
+- (a) make `remove_guardian` timelocked when it would leave fewer than N guardians
+- (b) let guardians removed after a proposal was made still veto it
+- (c) accept it and rely on Phase 5/6 alerting on `GuardianRemoved`
+
+I'd suggest (a) with N = 1. It needs a go-ahead because the spec says removal is immediate.
+
+**Deferred:** nothing else. Guardian *bond* (Phase 1 note) still stands.
+
+## Decisions
+
 (Ambiguities resolved during the build, with the reason.)
 
 - 2026-11-27 (Phase 0): `Cargo.lock`, `yarn.lock` and `clients/ts/yarn.lock` are committed. Without a lockfile cargo resolved crates that need edition 2024 (`blake3 1.8` → `digest 0.11` → `block-buffer 0.12`), which the Solana 2.1 platform-tools (cargo 1.79) can't build.
 - 2026-11-27 (Phase 0): the on-chain crates declare `rust-version = "1.79"`, so `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` keeps to compatible versions. `blake3` is pinned to 1.5.5 in `Cargo.lock` because 1.8.x doesn't declare an MSRV. If a future `cargo update` breaks `anchor build`, re-pin it with `cargo update -p blake3 --precise 1.5.5`.
+- 2026-11-27 (Phase 4): **"after warp" tests run in LiteSVM, not on the validator.** `solana-test-validator` can't move its clock mid-run and the minimum timelock is 24h. A test-only "short timelock" build of Breakglass would be dangerous to ship, the same reason Breakglass has no `planted-bug` feature. LiteSVM runs the exact `.so` files from `anchor build` with a settable clock. LiteSVM loads programs as non-upgradeable, so the test writes test-vault's ProgramData account directly (only `initialize_config` reads it).
+- 2026-11-27 (Phase 4): **`tighten_limits` is a separate instruction** that only accepts a change where *every* field is equal or stricter. Any mixed change, even one mostly tightening, must go through the timelock. That's simpler to audit than per-field rules, and fails closed.
+- 2026-11-27 (Phase 4): **what counts as stricter:** lower `cap_absolute`, `large_threshold` and `instant_allowance`; higher `window_secs`, `hold_secs`, `auto_trip_secs` and `screen_secs`; a bps limit (0 = off) may be added or lowered but never removed or raised. `scope` and `vault` never change.
+- 2026-11-27 (Phase 4): **the whole pause policy, the unpausable mask and the timelock length change only through the timelock** (`ChangePolicy`), even when a field looks like tightening. For a guardian's limits, "tighter" (less pausing) is looser for the protocol, so no direction is obviously safe. A queued change keeps the `executable_at` it got when proposed.
+- 2026-11-27 (Phase 4): **actions are validated at propose and again at execute.** State can change during the 48h, for example the guardian set filling up. A proposal that becomes invalid can't run, and the admin can cancel it.
+- 2026-11-27 (Phase 4): **`veto_config` works until execution**, including after `executable_at` if nobody has executed yet. Only *current* guardians can veto. The admin can't veto (it cancels instead). Vetoed and cancelled changes keep their accounts for history.
+- 2026-11-27 (Phase 4): **a released hold is claimable at once and not capped again.** Its release already took the timelock plus the guardian veto window. The claim is still recorded in the window. `ReleaseHeld` accepts queued or frozen holds.
+- 2026-11-27 (Phase 4): **`initialize_config` no longer requires the admin's signature.** The upgrade authority already controls the program and authorizes the registration, and requiring the admin to sign forced the registration itself through Squads. A typo'd admin locks the protocol out of admin actions (recover by redeploying under a new program ID). The default pubkey is rejected.
+- 2026-11-27 (Phase 4): `propose_config` has a separate `payer` signer, so a Squads vault (or any admin) can pay for its PendingConfig.
 - 2026-11-27 (Phase 3): **invariants compare a per-user *claim* (position + held), not just the position.** A held withdrawal is still owed. Without counting it, the Hold path could either look like a theft or hide a bug that queues a hold bigger than the position. With it, one rule ("the vault paid exactly what the user's claim dropped by") covers both the Allow and Hold paths, and the "no withdrawal larger than the position" check follows from it.
 - 2026-11-27 (Phase 3): **invariants can only be disabled in a `planted-bug` build** (the spec says "invariants are mandatory"). The baseline scenario needs them off, so the switch exists only where the bug exists, and a default build rejects it with `InvariantsRequired`.
 - 2026-11-27 (Phase 3): **`yarn test:attack` replaces `anchor test -- --features planted-bug`.** That form passes the feature to every program, and the Breakglass program has no `planted-bug` feature (it must never have one). The script builds only test-vault with the bug, runs the full suite, and rebuilds the safe test-vault afterwards so a buggy `.so` is never left for `anchor deploy`.
@@ -205,6 +271,9 @@ Against the safe build the same script prints `transaction reverted: Insufficien
 
 - 2026-11-27 (Phase 0): program IDs changed from the starter IDs to `breakglass` = `AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB`, `test_vault` = `2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn`. Read the ID from the IDL's `address` field rather than hard-coding it.
 - 2026-11-27 (Phase 1): `PauseState` grows from 16 to 64 entries (`MAX_ACTIVE_PAUSES`), and a scope can now have several entries. Account size is 2925 bytes (was 765). Nothing is deployed yet, so there is no migration. Frontends must use `isScopePaused` / `pausedMask` rather than assuming one entry per scope.
+- 2026-11-27 (Phase 4): `PendingConfig` layout replaced: `action_kind: u8` + `action_data: bytes` become `action: ConfigAction`, plus `proposed_by` and `cancelled`. It was never live before, so no migration.
+- 2026-11-27 (Phase 4): `initialize_config`: `admin` is no longer a signer (still passed as an account).
+- 2026-11-27 (Phase 4): new events `ConfigChangeCancelled` and `LimitsTightened`. The monitor (Phase 5) must decode them. `HoldResolved.outcome = 1` (released) now occurs.
 - 2026-11-27 (Phase 3): test-vault only: `initializeVault` takes `disableInvariants: bool`, `claimHeld` takes the user's `position`, `Vault` gains `invariantsOff`, and `Position` gains `held`. No Breakglass program, account, event or error changed.
 - 2026-11-27 (Phase 2): `initialize_config` takes two more accounts (`upgradeAuthority` signer, `protectedProgramData`).
 - 2026-11-27 (Phase 2): `FlowLimiter` gains `vault`, `large_threshold_bps` and `auto_trip_secs`. `PendingWithdrawal` gains `scope` and `kind` (appended, so the `owner` memcmp offset is unchanged). Nothing is deployed, so there is no migration.
