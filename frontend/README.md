@@ -13,6 +13,24 @@ pnpm install
 pnpm dev        # http://localhost:3000
 ```
 
+## Configuration
+
+The app reads its settings from `NEXT_PUBLIC_` environment variables, through `src/lib/env.ts`. Every one has a safe default, so the app runs without any setup, in mock mode.
+
+To change a setting, copy `.env.example` to `.env.local` and edit it. `.env.local` stays out of git. Restart `pnpm dev` after a change.
+
+| Variable                            | Default                         | What it is                                              |
+| ----------------------------------- | ------------------------------- | ------------------------------------------------------- |
+| `NEXT_PUBLIC_DATA_MODE`             | `mock`                          | `mock` uses sample data; `live` reads the cluster below |
+| `NEXT_PUBLIC_SOLANA_CLUSTER`        | `devnet`                        | `localnet`, `devnet` or `mainnet-beta`                  |
+| `NEXT_PUBLIC_RPC_URL`               | `https://api.devnet.solana.com` | RPC endpoint for that cluster                           |
+| `NEXT_PUBLIC_BREAKGLASS_PROGRAM_ID` | from `docs/FRONTEND.md`         | The Breakglass program                                  |
+| `NEXT_PUBLIC_PROTECTED_PROGRAM_ID`  | the repo's `test_vault`         | The protocol Breakglass protects                        |
+| `NEXT_PUBLIC_USDC_MINT`             | not set                         | Token mint of the demo vault, filled in at checkpoint B |
+| `NEXT_PUBLIC_MONITOR_API_URL`       | `http://127.0.0.1:8080`         | Off-chain monitor API                                   |
+
+A value that is set but invalid (a typo in the cluster, a malformed address) stops the app with a message naming the variable.
+
 ## Scripts
 
 | Command             | What it does                                        |
