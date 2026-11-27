@@ -3,8 +3,9 @@
 //! - `require_scope_open`: CPI to `check_scope` (non-outflow instructions).
 //! - `check_outflow`: the outflow gate, returns `Decision::{Allow, Hold}`.
 //! - `claim_held` / `reject_held`: resolve a held withdrawal.
-//!   Phase 3 adds invariant snapshot/assert hooks; a `#[breakglass::protected]`
-//!   macro comes later.
+//! - `invariants::{Snapshot, assert_invariants}`: zero-loss in-transaction
+//!   invariants (snapshot before the body, assert after).
+//!   A `#[breakglass::protected]` macro comes later.
 //!
 //! Integration rules (fail closed):
 //! - Type the config as `Account<'info, breakglass::state::ProtocolConfig>` and
@@ -17,6 +18,9 @@
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::get_return_data;
+
+pub mod invariants;
+pub use invariants::{assert_invariants, Snapshot};
 
 pub use breakglass;
 pub use breakglass::constants::{scopes, GATE_SIGNER_SEED};

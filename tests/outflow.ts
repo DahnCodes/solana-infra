@@ -19,6 +19,7 @@ import {
   eventsOf,
   expectError,
   freezeHeld,
+  heldOf,
   fund,
   guardians,
   holdPda,
@@ -112,6 +113,7 @@ describe("outflow", () => {
     const { sig, hold, nonce } = await withdrawHeld(a, 500);
     expect(await tokenBalance(a.userToken)).to.equal(before);
     expect(await positionOf(a)).to.equal(4_400);
+    expect(await heldOf(a)).to.equal(500); // still owed, now as a hold
 
     const ev = await onlyEvent(sig, "LargeWithdrawalQueued");
     expect(ev.hold.toBase58()).to.equal(hold.toBase58());
@@ -131,6 +133,7 @@ describe("outflow", () => {
     await waitPast(h.releaseAt.toNumber());
     const claim = await claimHeld(a, hold);
     expect(await tokenBalance(a.userToken)).to.equal(before + 500n);
+    expect(await heldOf(a)).to.equal(0);
     expect(await names(claim)).to.deep.equal([
       "holdResolved",
       "outflowRecorded",
@@ -167,6 +170,7 @@ describe("outflow", () => {
     const res = await onlyEvent(rej, "HoldResolved");
     expect(res.outcome).to.equal(2);
     expect(await positionOf(a)).to.equal(4_400);
+    expect(await heldOf(a)).to.equal(0);
     expect(await tokenBalance(a.userToken)).to.equal(before);
 
     await expectError(claimHeld(a, hold), "HoldInvalidState");

@@ -165,9 +165,15 @@ What the program enforces, so a UI can disable buttons and explain errors before
 
 **Picking `holdNonce`:** the hold account must be in the transaction before the decision is known, so the client picks the nonce (any unused u64; `outflowAccounts()` uses a random one) and passes both the nonce and the hold PDA. An already-used nonce makes a held withdrawal fail.
 
-**test-vault's instructions** (the reference integration, `clients/ts/idl` has no test-vault types; read `target/idl/test_vault.json`): `withdraw(amount, holdNonce)`, `claimHeld()`, `rejectHeld()` (admin). Breakglass accounts use a `bg` prefix (`bgConfig, bgPauseState, bgFlowLimiter, bgHold, bgEventAuthority`) plus `gateSigner`.
+**test-vault's instructions** (the reference integration, `clients/ts/idl` has no test-vault types; read `target/idl/test_vault.json`): `initializeVault(disableInvariants: bool)` (must be `false` outside attack-test builds), `withdraw(amount, holdNonce)`, `claimHeld()` (also takes the user's `position`), `rejectHeld()` (admin). Breakglass accounts use a `bg` prefix (`bgConfig, bgPauseState, bgFlowLimiter, bgHold, bgEventAuthority`) plus `gateSigner`. A test-vault `Position` is `{ owner, vault, amount, held }`: `amount` is withdrawable now, `held` sits in queued or frozen holds and is still owed to the user.
 
 **Every claim counts against the window.** If a claim would cross the cap, it auto-trips the scope and pays nothing (the hold stays `queued`); try again after the window frees up and the admin reopens the scope.
+
+### Zero-loss mode
+
+Two protections a UI should explain:
+- **Screen-all** (`FlowLimiter.instantAllowance` = 0, or small): every withdrawal above the allowance is held for `screenSecs` (default 120s) as `kind: screen`, emitting `WithdrawalScreenQueued`. Clean ones are claimable after `releaseAt`. Flagged ones are frozen by the guardian (bot from Phase 6). Show "screening, ready at `releaseAt`" rather than "held".
+- **Invariants:** the protocol checks its own books inside the withdraw/claim transaction (`breakglass_sdk::invariants`). If anything doesn't add up, the transaction reverts with `InvariantViolated` (6017), raised by **the protocol's program**, not Breakglass, so the failing program ID is the protocol's. An honest user never sees it. If they do, the protocol has a bug, so show "blocked by a safety check" and don't suggest retrying.
 
 ## 6. Events
 
@@ -261,7 +267,7 @@ Anchor numbers custom errors from 6000 in declaration order. `errors.rs` is appe
 | 6014 | `TimelockActive` | Change is queued. Show `executableAt`. |
 | 6015 | `InvalidTimelock` | |
 | 6016 | `Vetoed` | Change was vetoed by the guardian. |
-| 6017 | `InvariantViolated` | Transaction blocked by a safety check. |
+| 6017 | `InvariantViolated` | Transaction blocked by a safety check. Raised by the *protected* program through the SDK (zero-loss invariants), so the failing program is the protocol's. |
 | 6018 | `MathOverflow` | |
 | 6019 | `NotExecutable` | |
 | 6020 | `ScopeNotPaused` | Nothing to renew or lift: that scope isn't paused. |

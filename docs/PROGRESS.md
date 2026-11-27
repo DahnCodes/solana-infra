@@ -7,7 +7,7 @@ Claude Code updates this file at the end of every phase (see docs/BUILD_PLAN.md)
 | 0 Toolchain and skeleton | Done (2026-11-27) | `anchor build && anchor test` (1 passing), `cargo test -p breakglass`, `cd monitor && cargo test` (5 passing), `scripts/sync-client.sh`, `cd clients/ts && yarn build` | Toolchain pinned, lockfiles committed, program IDs synced. See below. |
 | 1 Config, roles, pauses | Done (2026-11-27) | `cargo test -p breakglass` (20 passing), `anchor test` (12 passing), `yarn ts-node scripts/demo-pause.ts` | See Phase 1 notes |
 | 2 Outflow gate and holds | Done (2026-11-27) | `cargo test -p breakglass` (33 passing), `anchor test` (31 passing), `yarn ts-node scripts/demo-outflow.ts` | See Phase 2 notes |
-| 3 Zero-loss mode | Not started | | |
+| 3 Zero-loss mode | Done (2026-11-27) | `cargo test -p breakglass-sdk` (8 passing), `anchor test` (33 passing), `yarn test:attack` (34 passing on the planted-bug build), `yarn ts-node scripts/attack-big-drain.ts` | See Phase 3 notes |
 | 4 Timelocks | Not started | | |
 | 5 Monitor v1 | Not started | | |
 | 6 Guardian bot and screening | Not started | | |
@@ -111,12 +111,67 @@ The demo leaves WITHDRAW auto-tripped (handy for UI work). The next run, and `de
 - Zero-loss screening: the on-chain part landed now (see Decisions). Phase 3 adds the invariants, the planted-bug tests and the guardian-freezes-all scenario.
 - The spec's "gate's decision diagram" isn't in the repo copy of SPEC.md. I followed the `check_outflow` row of the instruction table instead.
 
-## Decisions
+## Phase 3 notes
+
+**Built:**
+- **SDK invariants** (`crates/breakglass-sdk/src/invariants.rs`): `Snapshot { assets, liabilities, user_claim }` before the body, `assert_invariants(before, after)` after. It fails with `InvariantViolated` and logs which check broke. 8 unit tests. The checks:
+  1. The vault balance moves by exactly the change in the user's claim (position plus holds). Because a claim can't go negative, this also means nobody can withdraw more than their recorded position.
+  2. Total liabilities move by the same amount, so no other user's balance changed.
+  3. Assets stay at or above liabilities.
+- **test-vault:**
+  - `withdraw` and `claim_held` snapshot and assert.
+  - `Position.held` tracks held amounts, so a hold still counts as owed.
+  - `initialize_vault(disable_invariants)`: only a `planted-bug` build accepts `true` (`InvariantsRequired` otherwise), and the flag is ignored in default builds.
+  - The planted bug (`withdraw` skips the position check) is behind the feature, which is off by default.
+- **Screen-all** (`instant_allowance` = 0 → every withdrawal becomes a hold for `screen_secs`) and `WithdrawalScreenQueued` landed early in Phase 2. Phase 3 adds the attack scenario for them.
+- **Tests:** `tests/attack.ts`. In a default build it proves the bug isn't there and invariants can't be turned off. With `PLANTED_BUG=1` it runs the three acceptance scenarios. `held` bookkeeping is also asserted in `tests/outflow.ts`.
+- **`yarn test:attack`** (`scripts/test-attack.sh`): builds test-vault with `--features planted-bug`, runs the whole suite against it with `PLANTED_BUG=1`, then always rebuilds the safe test-vault (even on failure).
+- **`scripts/attack-big-drain.ts`**: the manual check. It works against either build, and `demo-common.ts` gained `addUser()`.
+- **`Anchor.toml`** lists the test files in an explicit order (`breakglass.ts` first, since it tests registration).
+
+**Test commands:**
+```bash
+cargo test -p breakglass-sdk          # 8 passing (invariants)
+cargo test -p breakglass              # 33 passing
+anchor test                           # 33 passing (safe build; attack.ts runs its default-build cases)
+yarn test:attack                      # 34 passing on the planted-bug build, then rebuilds the safe test-vault
+# manual check
+solana-test-validator --reset                                         # terminal 1
+anchor build -p test_vault -- --features planted-bug && anchor deploy # terminal 2
+yarn ts-node scripts/attack-big-drain.ts
+#   transaction reverted: InvariantViolated (BalanceNotMatchingClaim)
+#   ATTACK FAILED: vault balance unchanged (10100 tokens)
+anchor build -p test_vault && anchor deploy                           # put the safe build back
+```
+Against the safe build the same script prints `transaction reverted: InsufficientPosition` and the same `ATTACK FAILED` line.
+
+**Results of the three scenarios (planted-bug build):**
+1. **Invariants on:**
+   - a 1,000 withdraw against a 100 position (Allow path) reverts
+   - a 9,000 withdraw (Hold path) reverts
+   - the vault, position and held amounts are unchanged
+   - an honest 100 withdraw still works
+2. **Invariants off, screen-all on:**
+   - three 3,000 withdraws are all queued as `screen` holds
+   - the guardian freezes them, and every claim after `releaseAt` fails `HoldFrozen`
+   - the vault is unchanged
+3. **Both off (baseline, cap 1,000, threshold 400):**
+   - the attacker gets 900, more than their 100 position, which proves the bug is live
+   - that is within the cap; then the scope trips and the rest are `ScopePaused`
+
+**Deferred:**
+- "The share price never falls" (spec) doesn't apply to test-vault, which has no shares. The SDK documents writing extra checks with the same pattern.
+- `reject_held` and `deposit` don't run the invariants. Neither moves funds out (a reject moves held → position inside the protocol). Worth adding when protocols with fees or shares integrate.
+
 
 (Ambiguities resolved during the build, with the reason.)
 
 - 2026-11-27 (Phase 0): `Cargo.lock`, `yarn.lock` and `clients/ts/yarn.lock` are committed. Without a lockfile cargo resolved crates that need edition 2024 (`blake3 1.8` → `digest 0.11` → `block-buffer 0.12`), which the Solana 2.1 platform-tools (cargo 1.79) can't build.
 - 2026-11-27 (Phase 0): the on-chain crates declare `rust-version = "1.79"`, so `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` keeps to compatible versions. `blake3` is pinned to 1.5.5 in `Cargo.lock` because 1.8.x doesn't declare an MSRV. If a future `cargo update` breaks `anchor build`, re-pin it with `cargo update -p blake3 --precise 1.5.5`.
+- 2026-11-27 (Phase 3): **invariants compare a per-user *claim* (position + held), not just the position.** A held withdrawal is still owed. Without counting it, the Hold path could either look like a theft or hide a bug that queues a hold bigger than the position. With it, one rule ("the vault paid exactly what the user's claim dropped by") covers both the Allow and Hold paths, and the "no withdrawal larger than the position" check follows from it.
+- 2026-11-27 (Phase 3): **invariants can only be disabled in a `planted-bug` build** (the spec says "invariants are mandatory"). The baseline scenario needs them off, so the switch exists only where the bug exists, and a default build rejects it with `InvariantsRequired`.
+- 2026-11-27 (Phase 3): **`yarn test:attack` replaces `anchor test -- --features planted-bug`.** That form passes the feature to every program, and the Breakglass program has no `planted-bug` feature (it must never have one). The script builds only test-vault with the bug, runs the full suite, and rebuilds the safe test-vault afterwards so a buggy `.so` is never left for `anchor deploy`.
+- 2026-11-27 (Phase 3): **`InvariantViolated` is raised by the protected program** (the SDK's code is 6017), not by Breakglass. The check has to run inside the protocol's instruction after its own transfer. Frontends must check which program failed (FRONTEND.md section 8 already says so).
 - 2026-11-27 (Phase 2): **Deny is an error, not a return value.** A paused scope makes `check_outflow` / `claim_held` fail inside Breakglass with `ScopePaused`, so the failing program is Breakglass and code 6000 can't be confused with the protocol's own 6000+ errors. Deny changes no state, so nothing is lost. `Decision::Deny` stays in the enum, and the SDK maps it to `ScopePaused` too.
 - 2026-11-27 (Phase 2): **the protocol picks the hold nonce** (`check_outflow(..., hold_nonce)`), and the hold PDA is passed on every call but created only on Hold. The account must be in the transaction before the decision is known. A Breakglass-side counter would either write-lock the config on every withdraw or race between users. The spec's `mint` arg was dropped: the limiter account's seeds already bind the mint.
 - 2026-11-27 (Phase 2): **the bucket width is `ceil(window_secs / 11)`**, so 12 buckets (11 full plus 1 partial) always cover at least `window_secs`. The window can over-count by up to one bucket (about 5.5 minutes on 1h) but never under-counts. The spec's "5 minutes each for a 1h window" would under-count by up to one bucket.
@@ -150,6 +205,7 @@ The demo leaves WITHDRAW auto-tripped (handy for UI work). The next run, and `de
 
 - 2026-11-27 (Phase 0): program IDs changed from the starter IDs to `breakglass` = `AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB`, `test_vault` = `2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn`. Read the ID from the IDL's `address` field rather than hard-coding it.
 - 2026-11-27 (Phase 1): `PauseState` grows from 16 to 64 entries (`MAX_ACTIVE_PAUSES`), and a scope can now have several entries. Account size is 2925 bytes (was 765). Nothing is deployed yet, so there is no migration. Frontends must use `isScopePaused` / `pausedMask` rather than assuming one entry per scope.
+- 2026-11-27 (Phase 3): test-vault only: `initializeVault` takes `disableInvariants: bool`, `claimHeld` takes the user's `position`, `Vault` gains `invariantsOff`, and `Position` gains `held`. No Breakglass program, account, event or error changed.
 - 2026-11-27 (Phase 2): `initialize_config` takes two more accounts (`upgradeAuthority` signer, `protectedProgramData`).
 - 2026-11-27 (Phase 2): `FlowLimiter` gains `vault`, `large_threshold_bps` and `auto_trip_secs`. `PendingWithdrawal` gains `scope` and `kind` (appended, so the `owner` memcmp offset is unchanged). Nothing is deployed, so there is no migration.
 - 2026-11-27 (Phase 2): `check_outflow`'s args are `(scope, amount, owner, hold_nonce)`, not the spec's `(scope, mint, amount, owner)`. A paused scope fails with `ScopePaused` instead of returning Deny.

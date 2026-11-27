@@ -1,5 +1,10 @@
 //! test-vault: a minimal token vault that integrates Breakglass.
 //! It exists to exercise the gate and to be attacked in tests. Never deploy to mainnet.
+//!
+//! Zero-loss mode: `withdraw` and `claim_held` snapshot the books before the
+//! body and assert the Breakglass invariants after it. In a default build the
+//! invariants always run. Only a `planted-bug` build (attack tests) lets a
+//! vault turn them off, to show the window cap as the last backstop.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, TransferChecked};
@@ -8,7 +13,8 @@ use breakglass_sdk::breakglass::{
     state::{PendingWithdrawal, ProtocolConfig},
 };
 use breakglass_sdk::{
-    require_scope_open, scopes, BreakglassError, Decision, Gate, Outflow, GATE_SIGNER_SEED,
+    assert_invariants, require_scope_open, scopes, BreakglassError, Decision, Gate, Outflow,
+    Snapshot, GATE_SIGNER_SEED,
 };
 
 declare_id!("2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn");
@@ -21,11 +27,15 @@ pub const POSITION_SEED: &[u8] = b"position";
 pub mod test_vault {
     use super::*;
 
-    pub fn initialize_vault(ctx: Context<InitializeVault>) -> Result<()> {
+    /// `disable_invariants` is only accepted by a `planted-bug` build.
+    pub fn initialize_vault(ctx: Context<InitializeVault>, disable_invariants: bool) -> Result<()> {
+        #[cfg(not(feature = "planted-bug"))]
+        require!(!disable_invariants, VaultError::InvariantsRequired);
         let vault = &mut ctx.accounts.vault;
         vault.mint = ctx.accounts.mint.key();
         vault.bump = ctx.bumps.vault;
         vault.total_deposits = 0;
+        vault.invariants_off = disable_invariants;
         Ok(())
     }
 
@@ -72,10 +82,17 @@ pub mod test_vault {
     /// and nothing moves until `claim_held`. Paused -> fails with ScopePaused.
     /// `hold_nonce` names the hold account in case of Hold; pick an unused one.
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64, hold_nonce: u64) -> Result<()> {
+        // The planted bug: without this check a user can withdraw more than
+        // their position. The invariants (or, with them off, the gate) stop it.
         #[cfg(not(feature = "planted-bug"))]
         require!(
             ctx.accounts.position.amount >= amount,
             VaultError::InsufficientPosition
+        );
+        let before = snapshot(
+            &ctx.accounts.vault_token,
+            &ctx.accounts.vault,
+            &ctx.accounts.position,
         );
 
         let a = &ctx.accounts;
@@ -114,11 +131,25 @@ pub mod test_vault {
                 let vault = &mut ctx.accounts.vault;
                 vault.total_deposits = vault.total_deposits.saturating_sub(amount);
             }
-            Decision::Hold => {}
+            Decision::Hold => {
+                // Still owed to the user, now as a held withdrawal.
+                let position = &mut ctx.accounts.position;
+                position.held = position.held.checked_add(amount).ok_or(VaultError::Math)?;
+            }
             Decision::Deny => return err!(BreakglassError::ScopePaused),
         }
         let position = &mut ctx.accounts.position;
         position.amount = position.amount.saturating_sub(amount);
+
+        ctx.accounts.vault_token.reload()?;
+        if invariants_on(&ctx.accounts.vault) {
+            let after = snapshot(
+                &ctx.accounts.vault_token,
+                &ctx.accounts.vault,
+                &ctx.accounts.position,
+            );
+            assert_invariants(&before, &after)?;
+        }
         Ok(())
     }
 
@@ -127,6 +158,11 @@ pub mod test_vault {
     /// and this returns Ok without transferring (claim again later).
     pub fn claim_held(ctx: Context<ClaimHeld>) -> Result<()> {
         let amount = ctx.accounts.bg_hold.amount;
+        let before = snapshot(
+            &ctx.accounts.vault_token,
+            &ctx.accounts.vault,
+            &ctx.accounts.position,
+        );
         let a = &ctx.accounts;
         let decision = breakglass_sdk::claim_held(
             &gate(
@@ -157,6 +193,18 @@ pub mod test_vault {
         )?;
         let vault = &mut ctx.accounts.vault;
         vault.total_deposits = vault.total_deposits.saturating_sub(amount);
+        let position = &mut ctx.accounts.position;
+        position.held = position.held.checked_sub(amount).ok_or(VaultError::Math)?;
+
+        ctx.accounts.vault_token.reload()?;
+        if invariants_on(&ctx.accounts.vault) {
+            let after = snapshot(
+                &ctx.accounts.vault_token,
+                &ctx.accounts.vault,
+                &ctx.accounts.position,
+            );
+            assert_invariants(&before, &after)?;
+        }
         Ok(())
     }
 
@@ -181,8 +229,24 @@ pub mod test_vault {
             .amount
             .checked_add(amount)
             .ok_or(VaultError::Math)?;
+        position.held = position.held.checked_sub(amount).ok_or(VaultError::Math)?;
         Ok(())
     }
+}
+
+/// The books Breakglass's invariants compare: what the vault holds, what it
+/// owes everyone, and what it owes this user (position + held withdrawals).
+fn snapshot(vault_token: &TokenAccount, vault: &Vault, position: &Position) -> Snapshot {
+    Snapshot {
+        assets: vault_token.amount,
+        liabilities: vault.total_deposits,
+        user_claim: position.amount.saturating_add(position.held),
+    }
+}
+
+/// Always true in a default build.
+fn invariants_on(vault: &Vault) -> bool {
+    cfg!(not(feature = "planted-bug")) || !vault.invariants_off
 }
 
 fn gate<'info>(
@@ -232,7 +296,10 @@ fn transfer_out<'info>(
 pub struct Vault {
     pub mint: Pubkey,
     pub bump: u8,
+    /// Total owed to all users, including held withdrawals.
     pub total_deposits: u64,
+    /// Only settable in a `planted-bug` build; ignored otherwise.
+    pub invariants_off: bool,
 }
 
 #[account]
@@ -240,7 +307,10 @@ pub struct Vault {
 pub struct Position {
     pub owner: Pubkey,
     pub vault: Pubkey,
+    /// Withdrawable now.
     pub amount: u64,
+    /// In held withdrawals (queued or frozen), still owed to the user.
+    pub held: u64,
 }
 
 #[derive(Accounts)]
@@ -345,6 +415,13 @@ pub struct ClaimHeld<'info> {
     #[account(mut, token::mint = mint)]
     pub user_token: Account<'info, TokenAccount>,
 
+    #[account(
+        mut,
+        seeds = [POSITION_SEED, vault.key().as_ref(), user.key().as_ref()], bump,
+        constraint = position.owner == user.key()
+    )]
+    pub position: Account<'info, Position>,
+
     #[account(constraint = bg_config.protected_program == crate::ID @ VaultError::WrongBreakglassConfig)]
     pub bg_config: Account<'info, ProtocolConfig>,
     /// CHECK: owner and seeds verified by breakglass::claim_held.
@@ -406,4 +483,6 @@ pub enum VaultError {
     Math,
     #[msg("Hold does not belong to this user, mint or config")]
     WrongHold,
+    #[msg("Invariants can only be disabled in a planted-bug test build")]
+    InvariantsRequired,
 }

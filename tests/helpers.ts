@@ -254,7 +254,12 @@ export function initLimiter(
  * `minted` tokens. Pass `limiter: null` to skip creating the limiter.
  */
 export async function createVault(
-  opts: { minted?: number; limiter?: Partial<LimiterParams> | null } = {},
+  opts: {
+    minted?: number;
+    limiter?: Partial<LimiterParams> | null;
+    /** Only a planted-bug build accepts this (InvariantsRequired otherwise). */
+    invariantsOff?: boolean;
+  } = {},
 ): Promise<VaultFixture> {
   const user = Keypair.generate();
   await fund(user.publicKey);
@@ -268,7 +273,7 @@ export async function createVault(
     testVault.programId,
   );
   await testVault.methods
-    .initializeVault()
+    .initializeVault(opts.invariantsOff ?? false)
     .accountsPartial({ payer: admin.publicKey, mint })
     .rpc({ commitment: "confirmed" });
   if (opts.limiter !== null) {
@@ -296,6 +301,23 @@ export async function createVault(
     user,
     userToken: ata.address,
   };
+}
+
+/** Another funded user of the same vault, holding `minted` tokens. */
+export async function newUser(
+  v: VaultFixture,
+  minted = 1_000_000,
+): Promise<VaultFixture> {
+  const user = Keypair.generate();
+  await fund(user.publicKey);
+  const ata = await getOrCreateAssociatedTokenAccount(
+    connection,
+    admin,
+    v.mint,
+    user.publicKey,
+  );
+  await mintTo(connection, admin, v.mint, ata.address, admin, minted);
+  return { ...v, user, userToken: ata.address };
 }
 
 export function deposit(v: VaultFixture, amount: number) {
@@ -353,6 +375,7 @@ export function claimHeld(v: VaultFixture, hold: PublicKey) {
       vault: v.vault,
       vaultToken: v.vaultToken,
       userToken: v.userToken,
+      position: positionPda(v),
       bgConfig: configPda,
       bgPauseState: pausePda,
       bgFlowLimiter: v.limiter,
@@ -399,6 +422,13 @@ export async function positionOf(v: VaultFixture): Promise<number> {
   return (
     await testVault.account.position.fetch(positionPda(v))
   ).amount.toNumber();
+}
+
+/** Amount in this user's held withdrawals (queued or frozen). */
+export async function heldOf(v: VaultFixture): Promise<number> {
+  return (
+    await testVault.account.position.fetch(positionPda(v))
+  ).held.toNumber();
 }
 
 export async function tokenBalance(account: PublicKey): Promise<bigint> {

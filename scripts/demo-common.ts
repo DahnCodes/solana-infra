@@ -96,16 +96,14 @@ export async function setup() {
     );
   }
 
-  /** A fresh mint, vault and limiter, and a user who deposited `deposit` base units. */
+  /**
+   * A fresh mint, vault and limiter, and a user who deposited `deposit` base
+   * units. `addUser(deposit)` adds more depositors to the same vault.
+   */
   async function newVault(
     limiter: { cap: BN; threshold: BN; holdSecs: BN | null },
     deposit: BN,
   ) {
-    const user = Keypair.generate();
-    await connection.confirmTransaction(
-      await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL),
-      "confirmed",
-    );
     const mint = await createMint(connection, payer, payer.publicKey, null, 6);
     const vault = pda(
       [Buffer.from("vault"), mint.toBuffer()],
@@ -121,7 +119,7 @@ export async function setup() {
       mint.toBuffer(),
     ]);
     await vaultProgram.methods
-      .initializeVault()
+      .initializeVault(false)
       .accountsPartial({ payer: payer.publicKey, mint })
       .rpc();
     await bg.methods
@@ -145,66 +143,86 @@ export async function setup() {
         flowLimiter,
       })
       .rpc();
-    const userToken = (
-      await getOrCreateAssociatedTokenAccount(
+
+    let n = new BN(Date.now()).muln(1000);
+
+    /** A funded user who deposits `amount` into this vault. */
+    async function addUser(amount: BN) {
+      const user = Keypair.generate();
+      await connection.confirmTransaction(
+        await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL),
+        "confirmed",
+      );
+      const userToken = (
+        await getOrCreateAssociatedTokenAccount(
+          connection,
+          payer,
+          mint,
+          user.publicKey,
+        )
+      ).address;
+      await mintTo(
         connection,
         payer,
         mint,
-        user.publicKey,
-      )
-    ).address;
-    await mintTo(connection, payer, mint, userToken, payer, deposit.toNumber());
-    await vaultProgram.methods
-      .deposit(deposit)
-      .accountsPartial({
+        userToken,
+        payer,
+        amount.toNumber(),
+      );
+      await vaultProgram.methods
+        .deposit(amount)
+        .accountsPartial({
+          user: user.publicKey,
+          mint,
+          userToken,
+          bgConfig: config,
+          bgPauseState: pauseState,
+        })
+        .signers([user])
+        .rpc();
+
+      const holdFor = (nonce: BN) =>
+        pda([
+          Buffer.from("hold"),
+          config.toBuffer(),
+          user.publicKey.toBuffer(),
+          nonce.toArrayLike(Buffer, "le", 8),
+        ]);
+      const common = {
         user: user.publicKey,
         mint,
+        vault,
+        vaultToken,
         userToken,
         bgConfig: config,
         bgPauseState: pauseState,
-      })
-      .signers([user])
-      .rpc();
+        bgFlowLimiter: flowLimiter,
+        bgEventAuthority: eventAuthority,
+        gateSigner,
+      };
+      /** Withdraw `amount`; returns the hold PDA it would use if held. */
+      async function withdraw(amount: BN) {
+        n = n.addn(1);
+        const hold = holdFor(n);
+        const sig = await vaultProgram.methods
+          .withdraw(amount, n)
+          .accountsPartial({ ...common, bgHold: hold })
+          .signers([user])
+          .rpc();
+        return { sig, hold };
+      }
+      async function claim(hold: PublicKey) {
+        return vaultProgram.methods
+          .claimHeld()
+          .accountsPartial({ ...common, bgHold: hold })
+          .signers([user])
+          .rpc();
+      }
+      return { user, userToken, withdraw, claim };
+    }
 
-    let n = new BN(Date.now()).muln(1000);
-    const holdFor = (nonce: BN) =>
-      pda([
-        Buffer.from("hold"),
-        config.toBuffer(),
-        user.publicKey.toBuffer(),
-        nonce.toArrayLike(Buffer, "le", 8),
-      ]);
-    const common = {
-      user: user.publicKey,
-      mint,
-      vault,
-      vaultToken,
-      userToken,
-      bgConfig: config,
-      bgPauseState: pauseState,
-      bgFlowLimiter: flowLimiter,
-      bgEventAuthority: eventAuthority,
-      gateSigner,
-    };
-    /** Withdraw `amount`; returns the hold PDA it would use if held. */
-    async function withdraw(amount: BN) {
-      n = n.addn(1);
-      const hold = holdFor(n);
-      const sig = await vaultProgram.methods
-        .withdraw(amount, n)
-        .accountsPartial({ ...common, bgHold: hold })
-        .signers([user])
-        .rpc();
-      return { sig, hold };
-    }
-    async function claim(hold: PublicKey) {
-      return vaultProgram.methods
-        .claimHeld()
-        .accountsPartial({ ...common, bgHold: hold })
-        .signers([user])
-        .rpc();
-    }
-    return { user, mint, userToken, flowLimiter, withdraw, claim };
+    const first = await addUser(deposit);
+    return { ...first, mint, vaultToken, flowLimiter, addUser };
   }
 
   /** Lift any running pause on WITHDRAW (admin) so the demo starts clean. */
