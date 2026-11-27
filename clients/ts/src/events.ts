@@ -22,7 +22,7 @@ export interface DecodedEvent {
   slot?: number;
 }
 
-/** Decode all Breakglass CPI events from a fetched transaction. */
+/** Decode all Breakglass CPI events from a fetched transaction. `name` is camelCase (`paused`), as Anchor's coder reports it. */
 export function decodeCpiEvents(
   idl: Idl,
   breakglassProgramId: PublicKey,

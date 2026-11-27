@@ -10,7 +10,7 @@ Everything a frontend needs to read Breakglass state, send Breakglass transactio
 | --- | --- |
 | IDL (JSON) | `clients/ts/idl/breakglass.json` (generated, committed) |
 | TS type for `Program<Breakglass>` | `clients/ts/idl/breakglass.ts` (generated, committed) |
-| PDAs, seeds, scope masks, error codes, event decoding | `clients/ts/src` (`@breakglass/client`) |
+| PDAs, seeds, scope masks, error codes, event decoding, pause-state helpers | `clients/ts/src` (`@breakglass/client`) |
 | Off-chain incidents, alerts, holds | Monitor HTTP API, section 7 |
 
 ```ts
@@ -48,7 +48,7 @@ All accounts are owned by the Breakglass program. Seeds are UTF-8 strings. `u64`
 | --- | --- | --- | --- |
 | `ProtocolConfig` | `"config", protected_program` | `findConfigPda` | ✅ |
 | `PauseState` | `"pause", config` | `findPauseStatePda` | ✅ |
-| `GuardianLedger` | `"gledger", config, guardian` | `findGuardianLedgerPda` | 🔜 P1 |
+| `GuardianLedger` | `"gledger", config, guardian` | `findGuardianLedgerPda` | ✅ |
 | `FlowLimiter` | `"flow", config, mint` | `findFlowLimiterPda` | 🔜 P2 |
 | `PendingWithdrawal` | `"hold", config, owner, nonce(u64)` | `findPendingWithdrawalPda` | 🔜 P2 |
 | `PendingConfig` | `"cfgchg", config, id(u64)` | `findPendingConfigPda` | 🔜 P4 |
@@ -59,12 +59,16 @@ Field names below are as they appear in TypeScript (Anchor camelCases them). `i6
 
 **`PausePolicy`**: `maxGuardianPauseSecs`, `maxRenewals: u8`, `cooldownSecs`, `budgetSecsPerPeriod`, `budgetPeriodSecs`, `autoTripSecs`.
 
-**`PauseState`**: `bump`, `config`, `active: ScopePause[]` (max 16).
+**`PauseState`**: `bump`, `config`, `active: ScopePause[]` (max 64).
 **`ScopePause`**: `scope: u8`, `pausedUntil: i64`, `pausedBy`, `kind: { guardian } | { autoTrip } | { admin }`, `renewals: u8`, `reason: u16`.
 
-> **Expiry is lazy.** An entry stays in `active` after `pausedUntil` passes, but it no longer counts. A scope is paused only if some entry has `scope === s && pausedUntil > now`. Use the cluster clock (`getBlockTime` of a recent slot) rather than the browser clock if precision matters.
+There is one entry per (scope, kind, `pausedBy`), so **one scope can have several entries**, for example a guardian's pause and an admin's pause on WITHDRAW at the same time. The scope reopens when the last of them ends.
 
-**`GuardianLedger`** (🔜 P1): `guardian`, `periodStart`, `pauseSecsUsed`, `lastPauseEnd`. Remaining budget = `policy.budgetSecsPerPeriod - pauseSecsUsed`. The guardian is in cooldown until `lastPauseEnd + policy.cooldownSecs`.
+> **Expiry is lazy.** An entry stays in `active` after `pausedUntil` passes, but it no longer counts. Expired entries are removed on the next pause, renew or unpause. A scope is paused only if some entry has `scope === s && pausedUntil > now`. Use `isScopePaused`, `pausedMask`, `scopePausedUntil` and `runningPauses` from `clients/ts/src/pauses.ts` instead of reading `active` directly. Use the cluster clock (`getBlockTime` of a recent slot) rather than the browser clock if precision matters.
+
+**`GuardianLedger`**: `bump`, `config`, `guardian`, `periodStart`, `pauseSecsUsed`, `lastPauseEnd`. One per signer of `pause` / `renew_pause`, created (and paid for) by the signer on first use. It doesn't exist until then, so treat a missing ledger as "full budget, no cooldown". The admin gets one too, but it is never charged.
+- **Budget:** remaining = `policy.budgetSecsPerPeriod - pauseSecsUsed`. When `now >= periodStart + policy.budgetPeriodSecs`, the next pause starts a fresh period (so show the full budget then).
+- **Cooldown:** the guardian can't start a new pause until `lastPauseEnd + policy.cooldownSecs`. `lastPauseEnd` is the *scheduled* end of its latest pause. Lifting a pause early doesn't move it, and it is in the future while one of its pauses runs.
 
 **`FlowLimiter`** (🔜 P2): `mint`, `scope`, `windowSecs`, `capAbsolute: u64`, `capBpsOfVault: u16`, `buckets: u64[12]`, `bucketStart`, `largeThreshold`, `holdSecs`, `instantAllowance` (0 means screen every withdrawal), `screenSecs`. Window usage is the sum of `buckets`. The effective cap is `min(capAbsolute, capBpsOfVault × vault balance / 10000)`.
 
@@ -86,10 +90,10 @@ Who signs: **admin** (usually through a Squads multisig, so the frontend builds 
 | --- | --- | --- | --- | --- |
 | `initialize_config` | `{ guardians: Pubkey[], unpausableMask: u64, timelockSecs: i64 \| null }` | payer + admin | `payer, admin, protectedProgram` (config, pauseState and the event accounts are resolved by Anchor) | ✅ |
 | `check_scope` | `scope: u8` | CPI | `config, pauseState` | ✅ |
-| `pause` | `scopes: u64, duration: i64, reason: u16` | guardian or admin | config, pauseState, guardianLedger | 🔜 P1 |
-| `renew_pause` | `scopes: u64` | guardian or admin | same as `pause` | 🔜 P1 |
-| `unpause` | `scopes: u64` | admin, or the guardian for its own pause | config, pauseState | 🔜 P1 |
-| `remove_guardian` | `guardian: Pubkey` | admin (applies immediately) | config | 🔜 P1 |
+| `pause` | `scopes: u64` (mask), `duration: i64` (seconds), `reason: u16` (free-form code) | guardian or admin (`authority`, also pays for its ledger on first use) | `authority, config, pauseState, guardianLedger` (ledger = `findGuardianLedgerPda(config, authority)`; `pauseAccounts()` builds all four) | ✅ |
+| `renew_pause` | `scopes: u64` | guardian or admin (`authority`) | same as `pause` | ✅ |
+| `unpause` | `scopes: u64` | admin, or a guardian for its own pause (`authority`) | `authority, config, pauseState` | ✅ |
+| `remove_guardian` | `guardian: Pubkey` | admin (applies immediately) | `admin, config` | ✅ |
 | `init_flow_limiter` | limiter params | admin | config, flowLimiter, mint | 🔜 P2 |
 | `check_outflow` | `scope, mint, amount, owner` | CPI (protected program's `"breakglass-gate"` PDA) | | 🔜 P2 |
 | `claim_held` | hold | user (owner) | through the protected program | 🔜 P2 |
@@ -101,16 +105,41 @@ Who signs: **admin** (usually through a Squads multisig, so the frontend builds 
 | `cancel_config` | | admin | config, pendingConfig | 🔜 P4 |
 | `release_held` | hold | admin, through the timelock only | | 🔜 P4 |
 
-Planned args are indicative. The generated IDL is authoritative once the phase lands, and the phase updates this table to match it.
+Planned args are indicative. The generated IDL is authoritative once the phase lands, and the phase updates this table to match it. `config` must always be passed explicitly: its seeds use its own `protectedProgram` field, so Anchor can't resolve it.
 
-Example (✅ today):
+Examples (✅ today):
 
 ```ts
 await program.methods
   .initializeConfig({ guardians: [guardian], unpausableMask: new BN(1 << 3), timelockSecs: null })
   .accounts({ payer: wallet.publicKey, admin: wallet.publicKey, protectedProgram: PROTECTED_PROGRAM_ID })
   .rpc();
+
+// Guardian pauses WITHDRAW (scope 1) for 2 hours with reason code 42.
+const accts = pauseAccounts(program.programId, PROTECTED_PROGRAM_ID, guardian.publicKey);
+await program.methods.pause(new BN(scopeMask(1).toString()), new BN(2 * 3600), 42)
+  .accountsPartial(accts).signers([guardian]).rpc();
+await program.methods.renewPause(new BN(scopeMask(1).toString())).accountsPartial(accts).signers([guardian]).rpc();
+await program.methods.unpause(new BN(scopeMask(1).toString()))
+  .accountsPartial({ authority: guardian.publicKey, config: accts.config, pauseState: accts.pauseState })
+  .signers([guardian]).rpc();
 ```
+
+### Pause rules
+
+What the program enforces, so a UI can disable buttons and explain errors before sending:
+
+| Rule | Guardian | Admin |
+| --- | --- | --- |
+| Who | Must be in `config.guardians` at call time. A removed guardian loses every power at once. | `config.admin`. If a key is both, it acts as admin. |
+| Scopes | Mask must be non-zero (`InvalidScope`) and must not touch `unpausableMask` (`ScopeUnpausable`). | Same. |
+| `pause` duration | `1 ..= policy.maxGuardianPauseSecs` (24h), else `InvalidDuration` / `PauseTooLong`. | Any positive duration. |
+| `pause` cooldown | No new pause while one of its own pauses is running, or until `lastPauseEnd + cooldownSecs` (6h) (`GuardianCooldown`). To pause more scopes at once, put them all in one mask. | None. |
+| Budget | Each `pause` charges `duration` and each `renew_pause` charges `maxGuardianPauseSecs`, once per call (not per scope), against `budgetSecsPerPeriod` (96h per 30 days) (`PauseBudgetExhausted`). | None. |
+| `renew_pause` | Only its own running pauses, each extended by `maxGuardianPauseSecs` from its current `pausedUntil`, at most `maxRenewals` (2) times (`RenewCapReached`). 24h + 2 × 24h = 72h max. A scope paused only by someone else gives `Unauthorized`. A scope with no running pause gives `ScopeNotPaused`. | Any running pause, no cap. Adds an **admin** entry ending `maxGuardianPauseSecs` after the scope's latest end, so from then on only the admin can lift it. |
+| `unpause` | Only if **every** running pause on each requested scope is its own guardian pause. Otherwise `Unauthorized` (so it can't lift auto-trips, admin pauses or another guardian's pause). | Lifts every running pause on the scopes. |
+| Not paused | Scopes in the mask that aren't paused are skipped. If nothing was lifted: `ScopeNotPaused`. | Same. |
+| Re-pausing | Can't (cooldown). | Pausing an already admin-paused scope never shortens it (`pausedUntil` = the later of the two). |
 
 **User withdrawals go through the protected protocol, not Breakglass.** The user calls the protocol's `withdraw`. The protocol CPIs `check_outflow` and gets `Allow | Hold | Deny`. On Hold, a `PendingWithdrawal` is created and a `LargeWithdrawalQueued` or `WithdrawalScreenQueued` event says when it unlocks. The UI should show "held until `releaseAt`" and let the user claim it later through the protocol's claim instruction.
 
@@ -124,15 +153,17 @@ const events = await fetchEvents(connection, idl, program.programId, signature);
 const stop = onBreakglassEvents(connection, idl, program.programId, (evs) => console.log(evs));
 ```
 
+Anchor's TS coder reports event names in **camelCase** (`paused`, `pauseRenewed`), not as the Rust struct names in the table below (`Paused`, `PauseRenewed`). Field names are camelCase too.
+
 For a dashboard, prefer the monitor API (section 7). It dedupes across several RPCs and keeps history.
 
 | Event | Fields | Meaning | Status |
 | --- | --- | --- | --- |
 | `ConfigInitialized` | config, protectedProgram, admin, guardians | Protocol registered | ✅ |
-| `Paused` | config, scopesMask, pausedUntil, by, kind (0 guardian, 1 auto-trip, 2 admin), reason | Scopes paused | 🔜 P1 |
-| `PauseRenewed` | config, scopesMask, pausedUntil, by, renewals | Pause extended | 🔜 P1 |
-| `Unpaused` | config, scopesMask, by | Pause lifted early | 🔜 P1 |
-| `GuardianRemoved` | config, guardian | | 🔜 P1 |
+| `Paused` | config, scopesMask, pausedUntil, by, kind (0 guardian, 1 auto-trip, 2 admin), reason | Scopes paused. `pausedUntil` is the latest end across the scopes (an admin re-pause never shortens). | ✅ |
+| `PauseRenewed` | config, scopesMask, pausedUntil, by, renewals | Pause extended. `pausedUntil` and `renewals` are the max across the scopes. `by` is the admin when the admin extended past the cap. | ✅ |
+| `Unpaused` | config, scopesMask, by | Pause lifted early. `scopesMask` holds only the scopes actually lifted, and each of them is now open. Expiry emits nothing. | ✅ |
+| `GuardianRemoved` | config, guardian | Guardian removed by the admin. Its running pauses stay until they expire or the admin lifts them. | ✅ |
 | `OutflowRecorded` | config, mint, owner, amount, windowTotal, windowCap | Withdrawal allowed | 🔜 P2 |
 | `LargeWithdrawalQueued` | config, hold, mint, owner, amount, releaseAt | Held for size | 🔜 P2 |
 | `WithdrawalScreenQueued` | config, hold, mint, owner, amount, releaseAt | Held for screening (zero-loss mode) | 🔜 P3 |
@@ -206,6 +237,9 @@ Anchor numbers custom errors from 6000 in declaration order. `errors.rs` is appe
 | 6017 | `InvariantViolated` | Transaction blocked by a safety check. |
 | 6018 | `MathOverflow` | |
 | 6019 | `NotExecutable` | |
+| 6020 | `ScopeNotPaused` | Nothing to renew or lift: that scope isn't paused. |
+| 6021 | `InvalidDuration` | Pause duration must be more than zero. |
+| 6022 | `GuardianNotFound` | That key isn't a guardian. |
 
 A protected protocol has its own errors that also start at 6000, so check which program failed before mapping a code.
 

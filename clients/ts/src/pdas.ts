@@ -61,7 +61,7 @@ export function findPendingWithdrawalPda(
   );
 }
 
-/** ["gledger", config, guardian] (Phase 1) */
+/** ["gledger", config, guardian]: pause budget and cooldown of one guardian. */
 export function findGuardianLedgerPda(
   breakglassProgramId: PublicKey,
   config: PublicKey,
@@ -93,4 +93,15 @@ export function protocolAddresses(
   const [config] = findConfigPda(breakglassProgramId, protectedProgram);
   const [pauseState] = findPauseStatePda(breakglassProgramId, config);
   return { config, pauseState };
+}
+
+/** The accounts `pause` / `renew_pause` take for a given signer (guardian or admin). */
+export function pauseAccounts(
+  breakglassProgramId: PublicKey,
+  protectedProgram: PublicKey,
+  authority: PublicKey,
+) {
+  const { config, pauseState } = protocolAddresses(breakglassProgramId, protectedProgram);
+  const [guardianLedger] = findGuardianLedgerPda(breakglassProgramId, config, authority);
+  return { authority, config, pauseState, guardianLedger };
 }

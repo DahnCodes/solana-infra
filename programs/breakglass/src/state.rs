@@ -1,6 +1,6 @@
 //! Account layouts. See docs/SPEC.md "Accounts (PDAs)".
-//! Phase 0 uses ProtocolConfig and PauseState; the rest are defined now so the
-//! layout is reviewed early, and wired up in later phases.
+//! ProtocolConfig, PauseState and GuardianLedger are live (Phase 1). The rest
+//! are defined now so the layout is reviewed early, and wired up in later phases.
 
 use anchor_lang::prelude::*;
 
@@ -58,6 +58,17 @@ pub enum PauseKind {
     Guardian,
     AutoTrip,
     Admin,
+}
+
+impl PauseKind {
+    /// Code used in the `Paused.kind` event field.
+    pub fn code(self) -> u8 {
+        match self {
+            PauseKind::Guardian => 0,
+            PauseKind::AutoTrip => 1,
+            PauseKind::Admin => 2,
+        }
+    }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
@@ -133,7 +144,7 @@ pub struct PendingWithdrawal {
     pub status: HoldStatus,
 }
 
-/// PDA ["gledger", config, guardian]. Wired up in Phase 1.
+/// PDA ["gledger", config, guardian]. Created on the signer's first `pause` or `renew_pause`.
 #[account]
 #[derive(InitSpace)]
 pub struct GuardianLedger {

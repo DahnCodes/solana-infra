@@ -42,4 +42,11 @@ pub enum BreakglassError {
     MathOverflow,
     #[msg("Account is not executable")]
     NotExecutable,
+    // Phase 1 (append only)
+    #[msg("Scope is not paused")]
+    ScopeNotPaused,
+    #[msg("Pause duration must be positive")]
+    InvalidDuration,
+    #[msg("Key is not a guardian of this config")]
+    GuardianNotFound,
 }

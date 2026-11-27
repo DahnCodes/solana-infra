@@ -13,8 +13,9 @@ pub const HOUR: i64 = 3_600;
 pub const DAY: i64 = 24 * HOUR;
 
 pub const MAX_GUARDIANS: usize = 5;
-/// Max simultaneously active scope pauses tracked in PauseState.
-pub const MAX_ACTIVE_PAUSES: usize = 16;
+/// Max simultaneously active pause entries in PauseState. One entry per
+/// (scope, kind, paused_by), so 64 lets every scope be paused at once.
+pub const MAX_ACTIVE_PAUSES: usize = 64;
 pub const MAX_SCOPES: u8 = 64;
 
 // Pause policy

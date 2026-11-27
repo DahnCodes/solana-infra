@@ -13,7 +13,8 @@ export const SEEDS = {
 } as const;
 
 export const MAX_GUARDIANS = 5;
-export const MAX_ACTIVE_PAUSES = 16;
+/** Max pause entries in PauseState (one per scope + kind + pauser). */
+export const MAX_ACTIVE_PAUSES = 64;
 /** Scope ids are 0..63 and are combined into a u64 bitmask. */
 export const MAX_SCOPES = 64;
 
@@ -65,6 +66,9 @@ export const DEFAULTS = {
   minTimelockSecs: 24 * 3600,
   maxTimelockSecs: 48 * 3600,
 } as const;
+
+/** `Paused.kind` event values. Account fields use the enum form instead ({ guardian: {} } etc.). */
+export const PAUSE_KIND = { guardian: 0, autoTrip: 1, admin: 2 } as const;
 
 /** HoldResolved.outcome values. */
 export const HOLD_OUTCOME = { claimed: 0, released: 1, rejected: 2 } as const;

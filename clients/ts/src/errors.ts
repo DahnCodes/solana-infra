@@ -23,6 +23,9 @@ export const BREAKGLASS_ERRORS = [
   { code: 6017, name: "InvariantViolated", msg: "Protocol invariant violated" },
   { code: 6018, name: "MathOverflow", msg: "Arithmetic overflow" },
   { code: 6019, name: "NotExecutable", msg: "Account is not executable" },
+  { code: 6020, name: "ScopeNotPaused", msg: "Scope is not paused" },
+  { code: 6021, name: "InvalidDuration", msg: "Pause duration must be positive" },
+  { code: 6022, name: "GuardianNotFound", msg: "Key is not a guardian of this config" },
 ] as const;
 
 export type BreakglassErrorName = (typeof BREAKGLASS_ERRORS)[number]["name"];
