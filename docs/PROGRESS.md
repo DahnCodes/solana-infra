@@ -9,7 +9,7 @@ Claude Code updates this file at the end of every phase (see docs/BUILD_PLAN.md)
 | 2 Outflow gate and holds | Done (2026-11-27) | `cargo test -p breakglass` (33 passing), `anchor test` (31 passing), `yarn ts-node scripts/demo-outflow.ts` | See Phase 2 notes |
 | 3 Zero-loss mode | Done (2026-11-27) | `cargo test -p breakglass-sdk` (8 passing), `anchor test` (33 passing), `yarn test:attack` (34 passing on the planted-bug build), `yarn ts-node scripts/attack-big-drain.ts` | See Phase 3 notes |
 | 4 Timelocks | Done (2026-11-27) | `cargo test -p breakglass` (43 passing), `anchor test` (48 passing incl. 7 LiteSVM clock-warp tests), `yarn ts-node scripts/demo-timelock.ts` | See Phase 4 notes |
-| 5 Monitor v1 | Not started | | |
+| 5 Monitor v1 | Done (2026-11-27) | `cd monitor && cargo test` (44 passing, needs Postgres), `yarn monitor:e2e` (localnet + Postgres) | See Phase 5 notes |
 | 6 Guardian bot and screening | Not started | | |
 | 7 Attack suite and CI | Not started | | |
 | 8 Upgrade vault and co-signer (optional) | Not started | | |
@@ -219,12 +219,81 @@ I'd suggest (a) with N = 1. It needs a go-ahead because the spec says removal is
 
 **Deferred:** nothing else. Guardian *bond* (Phase 1 note) still stands.
 
+## Phase 5 notes
+
+**Built (`monitor/`):**
+- **Ingestors** (`ingest.rs`): one task per (RPC, websocket) pair, reconnecting with backoff. Each one subscribes to:
+  - logs at `processed` for the Breakglass and the protected program; each successful transaction is fetched at `confirmed`, its `emit_cpi!` inner instructions are decoded, and the PendingWithdrawal accounts its events mention are re-read
+  - vault token accounts and both programs' ProgramData accounts, read once at startup as a baseline
+  - slots, as a heartbeat (at most 1/s)
+
+  Transactions are deduped by signature across RPCs. Account updates are deduped (and protected from stale RPCs) by slot.
+- **Decoding** (`decode.rs`): hand-written Borsh mirrors of all 17 events and `PendingWithdrawal`. `matches_committed_idl` builds sample bytes for every event from `clients/ts/idl/breakglass.json` and checks every field decodes with the right name and value. A drift between the program and the monitor fails `cargo test`.
+- **Detectors** (`detectors/`, pure, fixture-tested): `pause_trip`, `large_withdrawal` (share of vault included), `window_usage` (50% / 80%), `balance_delta`, `config_change`, `program_upgrade`, `liveness` (30s; Critical if every RPC is silent).
+- **Router** (`router.rs`):
+  - one incident per root cause; severity routing via `[alerts] routes`
+  - unacked Critical incidents re-page every 2 min and are marked ESCALATED after 5 min
+  - Critical evidence after an ack reopens the incident
+  - every delivery attempt is recorded in `alerts`
+  - alerts are sent in background tasks, and a database error never drops a page
+- **Sinks** (`sinks/`):
+  - stdout
+  - Telegram (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
+  - signed webhook: `X-Breakglass-Signature: sha256=HMAC-SHA256(secret, "<timestamp>.<body>")` plus `X-Breakglass-Timestamp`
+  - PagerDuty: a stub that refuses to start, so nobody relies on it by accident
+
+  A missing secret stops startup. Every alert carries the tx link, amount and share of vault where known, the scope, the gate's decision and the allowed actions.
+- **Store** (`store.rs`, `migrations/0001_init.sql`): Postgres via sqlx with tables `protocols`, `events`, `incidents`, `alerts`, `acks`, plus `holds` (the PendingWithdrawal mirror). Migrations run at startup (`sqlx::migrate!`). Runtime-checked queries, so building needs no database. TLS (rustls) is enabled for managed Postgres (`?sslmode=require`).
+- **API** (`api.rs`): exactly FRONTEND.md section 7, which is now ✅:
+  - `GET /health`, `/incidents`, `/incidents/:id`, `/holds`, `/events`, `/stream` (SSE)
+  - `POST /incidents/:id/ack` (bearer token, constant-time compare; acks disabled if `MONITOR_API_TOKEN` is unset)
+  - JSON errors, cursor pagination, decimal-string amounts, CORS from `[api] cors_origins`
+- **Tests** (`db_tests.rs`, `sqlx::test`, a fresh database per test): one test per API endpoint that checks the exact JSON keys and types, plus router tests for dedupe, severity rise, reopen after ack, re-page and escalation, and a failing sink being recorded without stopping the others.
+- **`scripts/monitor-e2e.ts`** (`yarn monitor:e2e`): the integration acceptance test. It puts two TCP proxies in front of the validator (two "independent" RPCs), runs the monitor with the stdout sink, runs `demo-outflow.ts`, then kills one proxy.
+
+**Test commands:**
+```bash
+docker compose -f monitor/docker-compose.yml up -d
+(cd monitor && cargo test)        # 44 passing: 32 unit, 12 Postgres
+# integration (needs: solana-test-validator --reset, anchor deploy, Postgres, (cd monitor && cargo build))
+yarn monitor:e2e
+```
+Last run:
+```
+PASS: monitor started with 2 ingestors (rpc0, rpc1)
+PASS: LargeWithdrawalQueued (HIGH) alerted 208ms after its block
+PASS: LimitTripped (CRITICAL) alerted 354ms after its block
+PASS: liveness alert for rpc1 after 10.5s
+PASS: /health: degraded, rpc0 alive, rpc1 dead
+PASS: alerts still arrive with rpc1 dead (693ms)
+PASS: 8 incidents recorded in Postgres
+```
+The e2e uses `heartbeat_timeout_secs = 10` to keep the run short (the default is 30; the liveness detector is unit-tested at 30). Latency is measured from the end of the transaction's block-time second to the monitor's stdout line.
+
+**Environment note:** on this machine the Docker daemon couldn't reach Docker Hub (IPv6 route), so the tests ran against a throwaway `postgres:17-alpine` container that was already cached. `docker-compose.yml` still pins `postgres:16`; the migrations use only SQL that both versions support.
+
+**Deferred:**
+- `velocity_baseline` and `fresh_address` detectors, the guardian bot, and `GET /pending-changes`: Phase 6, as planned.
+- The spec's subscription to the admin multisig (Squads proposals touching the protocol) isn't built. Breakglass-side admin actions are covered by `config_change`. Watching Squads directly needs the multisig address in config and Squads account decoding. I'd suggest it for Phase 6 or 7.
+- PagerDuty is a stub, as the plan says. Discord/Slack/SMS/email (spec) aren't built; the signed webhook can feed any of them.
+- "Alerts fire at processed, state updates at confirmed": logs and accounts are subscribed at `processed`, but event details need the transaction, which RPCs only serve from `confirmed`, so event alerts fire at confirmed (about 0.4–1s later). The e2e shows under 1s end to end.
+- Incidents are never auto-resolved (`resolved` is reserved). Liveness outages open a new incident each time instead.
+
+
 ## Decisions
 
 (Ambiguities resolved during the build, with the reason.)
 
 - 2026-11-27 (Phase 0): `Cargo.lock`, `yarn.lock` and `clients/ts/yarn.lock` are committed. Without a lockfile cargo resolved crates that need edition 2024 (`blake3 1.8` → `digest 0.11` → `block-buffer 0.12`), which the Solana 2.1 platform-tools (cargo 1.79) can't build.
 - 2026-11-27 (Phase 0): the on-chain crates declare `rust-version = "1.79"`, so `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` keeps to compatible versions. `blake3` is pinned to 1.5.5 in `Cargo.lock` because 1.8.x doesn't declare an MSRV. If a future `cargo update` breaks `anchor build`, re-pin it with `cargo update -p blake3 --precise 1.5.5`.
+- 2026-11-27 (Phase 5): **the monitor copies the event types instead of sharing a crate.** A shared `breakglass-events` crate would pull anchor-lang 0.31 / solana-program 2.3 into the monitor's Solana 2.1 client tree, the version fight the separate workspace exists to avoid. Drift is caught instead by a test that decodes sample bytes for every event in the committed IDL.
+- 2026-11-27 (Phase 5): **`Event.kind` in the API is the Rust struct name** (`LimitTripped`), matching FRONTEND.md section 6's tables. Anchor's TS coder says `limitTripped`; that difference is documented.
+- 2026-11-27 (Phase 5): **alerts go out before (and regardless of) the database.** If Postgres is down, a page still goes out without an incident number. Alerting is the point; the store is history.
+- 2026-11-27 (Phase 5): **each RPC fetches every transaction itself, and the pipeline keeps the first.** A "first to claim" scheme would lose events whenever the claiming RPC's fetch failed. This costs one `getTransaction` per RPC per transaction, and an ingestor skips a fetch once another has delivered it.
+- 2026-11-27 (Phase 5): **`balance_delta` waits 15s (`balance_grace_secs`) before calling a drop unexplained.** The account update (processed) usually arrives before the transaction's `OutflowRecorded` (confirmed). A surplus of recorded outflows (deposit and withdrawal netting out in one update) is also forgiven after the grace, so an old credit can never hide a later theft.
+- 2026-11-27 (Phase 5): **incidents reopen on new Critical evidence after an ack**, so a balance drain that continues after someone acked the first alert pages again. Lower-severity evidence attaches quietly.
+- 2026-11-27 (Phase 5): **the heartbeat is the websocket slot subscription, not an HTTP poll**, so a dead websocket (no events) shows as dead even when HTTP still answers.
+- 2026-11-27 (Phase 5): **acks are disabled unless `MONITOR_API_TOKEN` is set** (fail closed). The token is compared in constant time.
 - 2026-11-27 (Phase 4): **"after warp" tests run in LiteSVM, not on the validator.** `solana-test-validator` can't move its clock mid-run and the minimum timelock is 24h. A test-only "short timelock" build of Breakglass would be dangerous to ship, the same reason Breakglass has no `planted-bug` feature. LiteSVM runs the exact `.so` files from `anchor build` with a settable clock. LiteSVM loads programs as non-upgradeable, so the test writes test-vault's ProgramData account directly (only `initialize_config` reads it).
 - 2026-11-27 (Phase 4): **`tighten_limits` is a separate instruction** that only accepts a change where *every* field is equal or stricter. Any mixed change, even one mostly tightening, must go through the timelock. That's simpler to audit than per-field rules, and fails closed.
 - 2026-11-27 (Phase 4): **what counts as stricter:** lower `cap_absolute`, `large_threshold` and `instant_allowance`; higher `window_secs`, `hold_secs`, `auto_trip_secs` and `screen_secs`; a bps limit (0 = off) may be added or lowered but never removed or raised. `scope` and `vault` never change.
@@ -271,6 +340,7 @@ I'd suggest (a) with N = 1. It needs a go-ahead because the spec says removal is
 
 - 2026-11-27 (Phase 0): program IDs changed from the starter IDs to `breakglass` = `AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB`, `test_vault` = `2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn`. Read the ID from the IDL's `address` field rather than hard-coding it.
 - 2026-11-27 (Phase 1): `PauseState` grows from 16 to 64 entries (`MAX_ACTIVE_PAUSES`), and a scope can now have several entries. Account size is 2925 bytes (was 765). Nothing is deployed yet, so there is no migration. Frontends must use `isScopePaused` / `pausedMask` rather than assuming one entry per scope.
+- 2026-11-27 (Phase 5): the monitor API went live as specified in FRONTEND.md section 7. Details settled now: `Event.kind` is PascalCase; `Event.data` uses camelCase with u64/i64 as strings; ack errors are 401/400/404/409; lists are newest first; `/stream` messages are `{type, data}` JSON in SSE `data:` lines.
 - 2026-11-27 (Phase 4): `PendingConfig` layout replaced: `action_kind: u8` + `action_data: bytes` become `action: ConfigAction`, plus `proposed_by` and `cancelled`. It was never live before, so no migration.
 - 2026-11-27 (Phase 4): `initialize_config`: `admin` is no longer a signer (still passed as an account).
 - 2026-11-27 (Phase 4): new events `ConfigChangeCancelled` and `LimitsTightened`. The monitor (Phase 5) must decode them. `HoldResolved.outcome = 1` (released) now occurs.

@@ -218,40 +218,58 @@ For a dashboard, prefer the monitor API (section 7). It dedupes across several R
 | `ConfigChangeCancelled` | config, change | The admin withdrew it | ✅ |
 | `LimitsTightened` | config, flowLimiter, mint | The admin tightened a limiter at once (no timelock) | ✅ |
 
-## 7. Monitor HTTP API (🔜 Phase 5, extended in Phase 6)
+## 7. Monitor HTTP API (✅ Phase 5; `GET /pending-changes` 🔜 Phase 6)
 
-An off-chain service in `monitor/`. JSON over HTTP, served by axum. This is the contract Phase 5 must implement. Any change updates this section in the same commit.
+An off-chain service in `monitor/`: JSON over HTTP, served by axum. This is the contract. Any change updates this section in the same commit, and `monitor/src/db_tests.rs` checks every response shape against it.
 
-- Base URL: `http://127.0.0.1:8080` by default (`[api] bind` in `monitor/config.toml`).
-- CORS: allowed origins come from `[api] cors_origins` (empty by default, which means same-origin only).
-- Auth: read endpoints are open on localhost. Write endpoints (`ack`) require `Authorization: Bearer <MONITOR_API_TOKEN>` from `monitor/.env`.
-- Times are RFC 3339 strings. Amounts are decimal **strings** (u64 does not fit in a JS number). Pubkeys and signatures are base58.
-- Errors: `{ "error": { "code": "not_found", "message": "..." } }` with a matching HTTP status.
-- Lists: `?limit=` (default 50, max 500) and `?cursor=`. Responses are `{ "items": [...], "next_cursor": string | null }`.
+- **Base URL:** `http://127.0.0.1:8080` by default (`[api] bind` in `monitor/config.toml`).
+- **CORS:** allowed origins come from `[api] cors_origins`. The default is empty, which means same-origin only; other origins get no `Access-Control-Allow-Origin`.
+- **Auth:** read endpoints are open. `POST /incidents/:id/ack` requires `Authorization: Bearer <MONITOR_API_TOKEN>` (from `monitor/.env`). If that variable is unset, acks are disabled and always return 401.
+- **Formats:** times are RFC 3339 strings (UTC). Amounts, masks and other u64/i64 values are decimal **strings**, because u64 doesn't fit a JS number. Pubkeys and signatures are base58.
+- **Errors:** `{ "error": { "code", "message" } }` with a matching HTTP status. Codes: `bad_request` (400), `unauthorized` (401), `not_found` (404, including unknown paths), `conflict` (409: the incident is already acked), `internal` (500).
+- **Lists:** `?limit=` (default 50, 1–500, otherwise 400) and `?cursor=`. Responses are `{ "items": [...], "next_cursor": string | null }`, newest first. Pass `next_cursor` back as `cursor` for the next page; `null` means the last page.
 
 | Method and path | Returns |
 | --- | --- |
-| `GET /health` | `{ "status": "ok" \| "degraded", "rpc": [{ "url", "last_slot", "lag_secs", "alive" }] }` |
+| `GET /health` | `{ "status": "ok" \| "degraded", "rpc": [{ "url", "last_slot": number, "lag_secs": number, "alive": boolean }] }`, one entry per configured RPC in config order. `degraded` if any RPC has missed heartbeats for longer than `heartbeat_timeout_secs` (default 30), or never connected. |
 | `GET /incidents?status=open\|acked\|resolved` | list of `Incident` |
-| `GET /incidents/:id` | `Incident` with `events: Event[]` and `alerts: Alert[]` |
-| `POST /incidents/:id/ack` | body `{ "by": string, "note"?: string }`, returns `Incident` |
-| `GET /holds?owner=&status=` | list of `Hold`, mirrored from `PendingWithdrawal` |
-| `GET /events?kind=&since=` | list of `Event` |
-| `GET /pending-changes` (Phase 6) | list of mirrored `PendingConfig` |
+| `GET /incidents/:id` | `Incident` plus `events: Event[]` (every stored event from the incident's transactions) and `alerts: Alert[]` (every delivery attempt) |
+| `POST /incidents/:id/ack` | body `{ "by": string (1–200 chars), "note"?: string }`, returns the `Incident` (`status: "acked"`). 409 if it isn't open. |
+| `GET /holds?owner=&status=` | list of `Hold`, mirrored from `PendingWithdrawal` accounts and refreshed on every hold event (queued, frozen, released, rejected, claimed) |
+| `GET /events?kind=&since=` | list of `Event`. `kind` is an event name from section 6. `since` is RFC 3339 and compares against `block_time`. |
+| `GET /stream` | Server-Sent Events. Each message is `data: { "type": "event" \| "incident", "data": Event \| Incident }`: every new event, and every new or changed incident (created, more evidence, severity raised, acked). A client that falls behind skips what it missed, so re-fetch `GET /incidents` on reconnect. |
+| `GET /pending-changes` (🔜 Phase 6) | list of mirrored `PendingConfig` |
 
 ```ts
 type Severity = "info" | "warning" | "high" | "critical";
 interface Incident { id: string; protocol: string; detector: string; severity: Severity;
   title: string; status: "open" | "acked" | "resolved"; opened_at: string;
   acked_by: string | null; acked_at: string | null; signatures: string[] }
-interface Event { id: string; kind: string /* event name from section 6 */; signature: string;
-  slot: number; block_time: string; data: Record<string, unknown> /* event fields, camelCase */ }
+interface Event { id: string; kind: string /* Rust event name from section 6, e.g. "LimitTripped" */;
+  signature: string; slot: number; block_time: string;
+  data: Record<string, unknown> /* event fields, camelCase; u64/i64 as strings, u8/u16 as numbers, pubkeys base58 */ }
 interface Hold { address: string; owner: string; mint: string; amount: string; nonce: string;
   created_at: string; release_at: string; status: "queued" | "frozen" | "released" | "rejected" | "claimed" }
 interface Alert { id: string; sink: string; sent_at: string; ok: boolean }
 ```
 
-Live updates: Phase 5 adds `GET /stream`, a Server-Sent Events feed of `{ "type": "event" | "incident", "data": ... }`. Until then, poll `GET /incidents`.
+**Event names:** `Event.kind` uses the **Rust struct name** (`Paused`, `LimitTripped`), unlike Anchor's TS coder, which reports camelCase (section 6). Field names in `data` are camelCase in both.
+
+**Incidents:**
+- **Grouping:** one incident per root cause. For example, `LimitTripped` and its auto-trip `Paused` are one incident, and so is everything about one hold (queued, frozen, released). Later evidence adds its signature to `signatures`.
+- **Severity:** it can rise (re-paged when it does), and never falls.
+- **Reopening:** new Critical evidence on an acked incident sets it back to `open`.
+- **Re-paging:** an unacked Critical incident re-pages every `critical_repage_secs` (default 120) and is marked escalated after `escalate_after_secs` (default 300).
+- **`resolved`:** nothing sets it yet; it's reserved for later phases.
+
+**Detectors** (`incident.detector`):
+- `pause_trip`: Critical for a trip; High for guardian/admin pauses, renewals and unpauses.
+- `large_withdrawal`: High when a hold is queued or released; Warning when frozen or rejected.
+- `window_usage`: Warning at 50% of the cap, High at 80%.
+- `balance_delta`: Critical for a vault drop no `OutflowRecorded` explains.
+- `config_change`: High for proposed/executed changes and guardian removal; Warning for vetoed/cancelled/tightened; Info for registration.
+- `program_upgrade`: Critical when either program's ProgramData changes.
+- `liveness`: High when one RPC goes silent; Critical when all do.
 
 The API never signs anything. For admin actions it may later return unsigned or Squads-proposal transactions for the frontend to hand to a wallet.
 

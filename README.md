@@ -89,16 +89,18 @@ cargo test -p breakglass
 cd monitor && cargo test && cd ..
 ```
 
-## 4. Run the monitor (skeleton)
+## 4. Run the monitor
 
 ```bash
+docker compose -f monitor/docker-compose.yml up -d   # local Postgres
 cd monitor
-cp config.example.toml config.toml
-cp .env.example .env
+cp config.example.toml config.toml   # set vault_token_accounts, RPCs, sinks
+cp .env.example .env                 # DATABASE_URL, MONITOR_API_TOKEN, Telegram/webhook secrets
+cargo test                           # unit + Postgres tests (needs the Postgres above)
 cargo run -- --config config.toml
 ```
 
-For now it only starts the pipeline and heartbeats. Real ingestion and alerts arrive in Phase 5 of the build plan.
+The monitor watches the Breakglass and protected programs over 2+ RPCs and pages on every event that matters, plus unexplained vault drops, program upgrades and dead RPCs. It serves the admin API on `http://127.0.0.1:8080` (see [`docs/FRONTEND.md`](docs/FRONTEND.md) section 7). End-to-end check against a local validator: `yarn ts-node scripts/monitor-e2e.ts`.
 
 ## 5. Run things by hand on a local validator
 

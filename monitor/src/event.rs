@@ -2,32 +2,65 @@
 
 use serde::Serialize;
 
-/// What the ingestors produce. Phase 5 decodes these from Anchor CPI events
-/// (see programs/breakglass/src/events.rs) and from vault account updates.
+use crate::decode::BgEvent;
+
+/// What detectors see.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChainEvent {
-    Paused { scopes_mask: u64, paused_until: i64, by: String, kind: u8 },
-    Unpaused { scopes_mask: u64, by: String },
-    LimitTripped { mint: String, scope: u8, window_total: u64, window_cap: u64 },
-    LargeWithdrawalQueued { hold: String, owner: String, amount: u64, release_at: i64 },
-    OutflowRecorded { mint: String, owner: String, amount: u64, window_total: u64, window_cap: u64 },
-    ConfigChangeProposed { change: String, action_kind: u8, executable_at: i64 },
-    VaultBalanceChanged { vault: String, before: u64, after: u64, recorded_outflow: u64 },
-    Heartbeat { source: String, unix_ts: i64 },
+    /// A Breakglass event (decoded from an `emit_cpi!` inner instruction).
+    Breakglass(BgEvent),
+    /// A vault token account's balance (on change, and once at startup).
+    VaultBalance {
+        vault: String,
+        mint: String,
+        amount: u64,
+    },
+    /// A program's ProgramData account (on change, and once at startup).
+    /// `hash` covers the whole account: code, upgrade slot and upgrade authority.
+    ProgramData { program: String, hash: String },
+    /// An ingestor's websocket is alive (slot notifications).
+    Heartbeat { source: String },
 }
 
 #[derive(Debug, Clone)]
 pub struct Observed {
+    /// Which ingestor saw it first, e.g. "rpc0".
+    pub source: String,
     pub signature: Option<String>,
     pub slot: u64,
+    /// Wall clock (unix seconds) when the monitor received it.
+    pub received_at: i64,
     pub event: ChainEvent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
+    Info,
     Warning,
     High,
     Critical,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Info => "info",
+            Severity::Warning => "warning",
+            Severity::High => "high",
+            Severity::Critical => "critical",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "info" => Some(Severity::Info),
+            "warning" => Some(Severity::Warning),
+            "high" => Some(Severity::High),
+            "critical" => Some(Severity::Critical),
+            _ => None,
+        }
+    }
 }
 
 /// What a detector emits. The router turns signals into incidents and alerts.
@@ -37,7 +70,32 @@ pub struct Signal {
     pub severity: Severity,
     pub title: String,
     pub detail: String,
+    /// What the responders can do about it (spec: "the allowed actions").
+    pub actions: String,
     pub signature: Option<String>,
-    /// Signals with the same key fold into one incident.
+    /// Signals with the same key fold into one incident (one per root cause).
     pub dedupe_key: String,
+}
+
+/// Unix seconds now.
+pub fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+/// `pct` of `part` in `whole`, as a short string ("12.5%"), or "?" when unknown.
+pub fn share(part: u64, whole: Option<u64>) -> String {
+    match whole {
+        Some(w) if w > 0 => format!("{:.1}%", part as f64 * 100.0 / w as f64),
+        _ => "?".into(),
+    }
+}
+
+/// RFC 3339 for a unix timestamp.
+pub fn rfc3339(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| ts.to_string())
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use super::Detector;
+use crate::decode::BgEvent;
 use crate::event::{ChainEvent, Observed, Severity, Signal};
 
 /// Warns when a mint's outflow window passes warning% / high% of its cap.
@@ -13,7 +14,11 @@ pub struct WindowUsage {
 
 impl WindowUsage {
     pub fn new(warning_pct: u8, high_pct: u8) -> Self {
-        Self { warning_pct, high_pct, last_level: HashMap::new() }
+        Self {
+            warning_pct,
+            high_pct,
+            last_level: HashMap::new(),
+        }
     }
 }
 
@@ -23,13 +28,14 @@ impl Detector for WindowUsage {
     }
 
     fn observe(&mut self, ev: &Observed) -> Vec<Signal> {
-        let ChainEvent::OutflowRecorded { mint, window_total, window_cap, .. } = &ev.event else {
+        let ChainEvent::Breakglass(BgEvent::OutflowRecorded(o)) = &ev.event else {
             return vec![];
         };
-        if *window_cap == 0 {
+        if o.window_cap.0 == 0 {
             return vec![];
         }
-        let pct = (*window_total as u128 * 100 / *window_cap as u128) as u64;
+        let mint = o.mint.to_string();
+        let pct = (o.window_total.0 as u128 * 100 / o.window_cap.0 as u128) as u64;
         let level = if pct >= self.high_pct as u64 {
             Some(Severity::High)
         } else if pct >= self.warning_pct as u64 {
@@ -39,11 +45,16 @@ impl Detector for WindowUsage {
         };
         let prev = self.last_level.insert(mint.clone(), level).flatten();
         match level {
-            Some(sev) if prev.map_or(true, |p| sev > p) => vec![Signal {
+            Some(sev) if prev.is_none_or(|p| sev > p) => vec![Signal {
                 detector: self.name(),
                 severity: sev,
-                title: format!("Outflow window at {pct}% of cap for mint {mint}"),
-                detail: format!("{window_total}/{window_cap}"),
+                title: format!("OutflowRecorded: window at {pct}% of cap for mint {mint}"),
+                detail: format!(
+                    "{}/{} after a {} withdrawal by {}",
+                    o.window_total.0, o.window_cap.0, o.amount.0, o.owner
+                ),
+                actions: "Watch for a trip. Guardian: pause early if outflows look abnormal."
+                    .into(),
                 signature: ev.signature.clone(),
                 dedupe_key: format!("window:{mint}"),
             }],
@@ -55,13 +66,21 @@ impl Detector for WindowUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::*;
+    use crate::detectors::fixtures::*;
 
     fn outflow(total: u64) -> Observed {
-        Observed {
-            signature: None,
-            slot: 1,
-            event: ChainEvent::OutflowRecorded { mint: "M".into(), owner: "O".into(), amount: 1, window_total: total, window_cap: 100 },
-        }
+        bg(
+            BgEvent::OutflowRecorded(OutflowRecorded {
+                config: pk(1),
+                mint: pk(2),
+                owner: pk(3),
+                amount: u(1),
+                window_total: u(total),
+                window_cap: u(100),
+            }),
+            1,
+        )
     }
 
     #[test]
@@ -72,5 +91,8 @@ mod tests {
         assert!(d.observe(&outflow(60)).is_empty());
         assert_eq!(d.observe(&outflow(85))[0].severity, Severity::High);
         assert!(d.observe(&outflow(90)).is_empty());
+        // Drops back (window rolled), then climbs again: alerts again.
+        assert!(d.observe(&outflow(10)).is_empty());
+        assert_eq!(d.observe(&outflow(55))[0].severity, Severity::Warning);
     }
 }

@@ -14,14 +14,36 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+borsh = { version = "1", features = ["derive"] }
+bs58 = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
+futures = "0.3"
+hex = "0.4"
+hmac = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+sha2 = "0.10"
+# Solana client crates: match the Solana CLI (2.1.x, see Anchor.toml).
+solana-account-decoder-client-types = "~2.1"
+solana-client = "~2.1"
+solana-pubsub-client = "~2.1"
+solana-rpc-client-api = "~2.1"
+solana-sdk = "~2.1"
+solana-transaction-status-client-types = "~2.1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "macros", "chrono", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "process"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Added in later phases (see BUILD_PLAN.md):
-# Phase 5: solana-client / solana-pubsub-client (match the Solana CLI version), sqlx (postgres), axum, reqwest, hmac, sha2
-# Phase 6: guardian signer (solana-sdk keypair; KMS trait later)
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
