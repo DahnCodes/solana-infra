@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Montserrat, Schibsted_Grotesk } from "next/font/google";
+import { NetworkWarning } from "@/components/network/network-warning";
 import { SolanaProvider } from "@/components/wallet/solana-provider";
 import "./globals.css";
 
@@ -27,7 +28,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${schibsted.variable} ${montserrat.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        <SolanaProvider>{children}</SolanaProvider>
+        <SolanaProvider>
+          <NetworkWarning />
+          {children}
+        </SolanaProvider>
       </body>
     </html>
   );

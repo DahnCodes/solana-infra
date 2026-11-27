@@ -9,6 +9,7 @@ import { Countdown } from "@/components/countdown";
 import { Input } from "@/components/input";
 import { InsetPanel, Panel } from "@/components/panel";
 import { ToastProvider, useToast } from "@/components/toast";
+import { NetworkBadge } from "@/components/network/network-badge";
 import { WalletButton } from "@/components/wallet/wallet-button";
 import {
   roleOf,
@@ -109,7 +110,12 @@ function Controls() {
     <Panel
       title="Demo controls"
       description="Act as another wallet, or move the simulated clock forward. A connected real wallet acts as a new user until you disconnect it."
-      actions={<WalletButton />}
+      actions={
+        <>
+          <NetworkBadge />
+          <WalletButton />
+        </>
+      }
     >
       <div className="flex flex-col gap-6">
         <div className="flex flex-wrap gap-2">
