@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `2.4 Data hooks`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `3.1 Wallet connection`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -104,7 +104,9 @@ src/
 - **2.3** done: `src/lib/breakglass/rules/` ports the program's limiter and pause logic line for line from the backend Rust (`limiter.rs`, `pause_logic.rs`, `gate.rs`, `check_outflow.rs`, `claim_held.rs` at `e52f9cd`); screens can use its read helpers (`windowUsage`, `bucketsOldestFirst`, `effectiveCap`, `isScopePaused`, `budgetLeft`, `cooldownEnds`, …). `mock/engine.ts` is a synchronous in-memory chain (every write atomic: a failed one changes nothing); `mock/client.ts` (`MockClient`) wraps it in `BreakglassClient` and adds `setWallet` (role switcher, `MOCK_WALLETS` in `mock/seed.ts`), `advanceClock`, `reset` and 350 ms latency. `mock/seed.ts` builds the demo state by replaying actions at past times. `getBreakglassClient()` / `getMockClient()` in `create-client.ts` pick by data mode. Timelocked changes follow our provisional reading of phase 4 (`releaseHeld` proposes a `releaseHeld` action; `cancelConfig` closes the account and emits no event).
 - Tests: `pnpm test` (Node's built-in runner, no extra dependency) runs `src/**/*.test.ts`; `pnpm check` now includes it. Files under `src/lib/breakglass` import each other with explicit `.ts` extensions (tsconfig `allowImportingTsExtensions`) so Node can run them, and must not use the `@/` alias.
 - **2.4** done: `src/hooks/use-client-query.ts` (`useClientQuery(key, read)`: reads in the browser only, re-reads on every client `subscribe` notification, keeps data while refreshing), `src/hooks/use-breakglass.ts` (one hook per read: `useProtocol`, `usePauseState`, `useFlowLimiters`, `useTokenBalance`, `useHolds`, `usePendingChanges`, `useGuardianLedger`, `usePosition`, `useEvents`, `useIncidents`, `useIncident`; plus `useChainNow` (cluster time, ticking, follows the mock clock), `useConnectedWallet`, `roleOf`, `useMockControls`), and `src/hooks/use-write.ts` (`useWrite` with pending and error state). No data library added. `/mock` is a temporary page that exercises them (wallet switcher, clock, withdraw, freeze, reject, claim, execute, veto); the dashboard (4.4) replaces it.
-- Next step: **3.1**, wallet connection (Phantom, Solflare, Backpack). It needs new dependencies (wallet adapter); ask first.
+- **3.1** built (committed), waiting for the human to confirm a real wallet connects and disconnects on devnet; tick it only then. `@solana/wallet-adapter-react`, `@solana/wallet-adapter-base` and `@solana/web3.js` 1.x are installed (approved); `wallet-adapter-react-ui` was left out on purpose because its modal brings its own colours. `SolanaProvider` (root layout) finds Wallet Standard wallets (Phantom, Solflare, Backpack) by itself, autoconnects, and in mock mode makes a connected real wallet the wallet the mock acts as. `WalletButton` is our own picker and account dialog. `pnpm-workspace.yaml` declines the install scripts of `bufferutil` and `utf-8-validate` (optional WebSocket speed-ups); keep it.
+- `Dialog` handles Escape itself: the in-app browser never fires the native `close` event, which had left dialogs unable to reopen after Escape (fixed in 3.1).
+- Next step after 3.1 is ticked: **3.2**, devnet badge and wrong-network warning.
 
 ## The checklist
 

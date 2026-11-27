@@ -24,6 +24,7 @@ export function getBreakglassClient(): BreakglassClient {
 
 /** The mock client, for mock-only controls (clock, wallet switcher), or null. */
 export function getMockClient(): MockClient | null {
+  if (env.dataMode !== "mock") return null;
   const current = getBreakglassClient();
   return current instanceof MockClient ? current : null;
 }

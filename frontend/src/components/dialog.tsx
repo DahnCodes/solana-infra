@@ -1,7 +1,13 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  type ReactNode,
+} from "react";
 
 type DialogProps = {
   open: boolean;
@@ -37,12 +43,32 @@ export function Dialog({
     if (!open && dialog.open) dialog.close();
   }, [open]);
 
+  // `open` is the only source of truth. Escape is handled in onKeyDown below
+  // (the browser's own close is blocked), because some browsers never fire
+  // the dialog's close event. If a browser closes it anyway, this tells the
+  // owner, so the dialog can open again.
+  const closedByBrowser = useEffectEvent(() => {
+    if (open) onClose();
+  });
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const handle = () => closedByBrowser();
+    dialog.addEventListener("close", handle);
+    return () => dialog.removeEventListener("close", handle);
+  }, []);
+
   return (
     <dialog
       ref={ref}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
-      onClose={onClose}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+        }
+      }}
       onClick={(event) => {
         // A click on the backdrop lands on the <dialog> element itself.
         if (event.target === event.currentTarget) onClose();

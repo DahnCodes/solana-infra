@@ -1,0 +1,6 @@
+# Install scripts we decline. bufferutil and utf-8-validate are optional
+# native speed-ups for WebSockets (pulled in by @solana/web3.js); the plain
+# JavaScript fallback is used instead, so their build scripts never run.
+allowBuilds:
+  bufferutil: false
+  utf-8-validate: false

@@ -1,5 +1,6 @@
 "use client";
 
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useSyncExternalStore } from "react";
 import type {
   Address,
@@ -7,13 +8,11 @@ import type {
   IncidentStatus,
   ProtocolConfig,
 } from "@/lib/breakglass";
-import {
-  getBreakglassClient,
-  getMockClient,
-} from "@/lib/breakglass/create-client";
+import { getMockClient } from "@/lib/breakglass/create-client";
 import { MOCK_WALLETS } from "@/lib/breakglass/mock/seed";
 import { env } from "@/lib/env";
 import { useClientQuery } from "./use-client-query";
+import { useHydrated } from "./use-hydrated";
 import { useNow } from "./use-now";
 
 /*
@@ -132,19 +131,22 @@ export function useChainNow(): number | null {
 
 // Wallet and role ------------------------------------------------------------------
 
-const subscribeToClient = (onChange: () => void) =>
-  getBreakglassClient().subscribe(onChange);
+const subscribeToMock = (onChange: () => void) =>
+  getMockClient()?.subscribe(onChange) ?? (() => {});
 
 /**
- * The connected wallet. In mock mode this is the wallet picked in the role
- * switcher; the real wallet adapter replaces it in step 3.1.
+ * The connected wallet. In live mode, the wallet connected through the
+ * adapter. In mock mode, the wallet the mock acts as: the role switcher's
+ * pick, or the real wallet while one is connected (see SolanaProvider).
  */
 export function useConnectedWallet(): Address | null {
-  return useSyncExternalStore(
-    subscribeToClient,
+  const { publicKey } = useWallet();
+  const mockWallet = useSyncExternalStore(
+    subscribeToMock,
     () => getMockClient()?.connectedWallet ?? null,
     () => null,
   );
+  return env.dataMode === "mock" ? mockWallet : (publicKey?.toBase58() ?? null);
 }
 
 export type Role = "admin" | "guardian" | "user";
@@ -158,17 +160,6 @@ export function roleOf(
   if (wallet === config.admin) return "admin";
   if (config.guardians.includes(wallet)) return "guardian";
   return "user";
-}
-
-const noSubscription = () => () => {};
-
-/** False during the server render and hydration, true after. */
-function useHydrated(): boolean {
-  return useSyncExternalStore(
-    noSubscription,
-    () => true,
-    () => false,
-  );
 }
 
 /** Mock-only demo controls, or null in live mode (and before hydration). */
