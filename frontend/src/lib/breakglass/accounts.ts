@@ -11,7 +11,7 @@ import type {
   Seconds,
   U64,
   UnixSeconds,
-} from "./primitives";
+} from "./primitives.ts";
 
 // Enums --------------------------------------------------------------------
 

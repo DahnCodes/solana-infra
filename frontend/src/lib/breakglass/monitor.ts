@@ -4,8 +4,8 @@
  * them: snake_case keys, RFC 3339 time strings, amounts as decimal strings
  * and keys as base58 strings.
  */
-import type { HoldStatus } from "./accounts";
-import type { BreakglassEventName } from "./events";
+import type { HoldStatus } from "./accounts.ts";
+import type { BreakglassEventName } from "./events.ts";
 
 export type Severity = "info" | "warning" | "high" | "critical";
 

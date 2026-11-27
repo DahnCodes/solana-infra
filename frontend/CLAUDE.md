@@ -55,7 +55,7 @@ Never edit backend files (`programs/`, `crates/`, `clients/`, `monitor/`, `docs/
 1. **One step at a time, top to bottom** through the checklist below. Don't start a step until everything in its "Needs first" is done.
 2. **A step is done only when its "Done when" is true.** Then tick it (see "The checklist" below for where).
 3. **One commit per step**, message starting with the step number and title, for example `0.3 Env config`. Push to the `frontend` branch.
-4. **Run `pnpm check` before every commit** (lint, typecheck, Prettier). Never commit with it failing, and never weaken a lint rule or a type to make it pass.
+4. **Run `pnpm check` before every commit** (lint, typecheck, Prettier, tests). Never commit with it failing, and never weaken a lint rule or a type to make it pass.
 5. **Stop at every checkpoint** (A, B, C). Tell the human exactly what you need from the backend before continuing.
 6. **Mock first, live later.** Every screen is built on mock data behind one client interface. Live wiring happens in phase 6 by switching `NEXT_PUBLIC_DATA_MODE`.
 7. **One source of truth for data shapes.** Mock types mirror `docs/FRONTEND.md` exactly (field names as camelCase TS). After checkpoint A they come from the generated IDL types.
@@ -70,7 +70,7 @@ Never edit backend files (`programs/`, `crates/`, `clients/`, `monitor/`, `docs/
 - Next.js **16.4.6** (App Router, `src/` folder, `cacheComponents` and `partialPrefetching` on in `next.config.ts`), React 19.3, TypeScript, Tailwind CSS 4 (via `@tailwindcss/turbopack`).
 - **pnpm** (not npm or yarn) inside `frontend/`. The backend uses yarn in its own folders; leave that alone.
 - ESLint (Next core-web-vitals + TypeScript) with `eslint-config-prettier`; Prettier with `prettier-plugin-tailwindcss` (double quotes, trailing commas, same as the backend).
-- Scripts: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm format`, `pnpm format:check`, `pnpm check`.
+- Scripts: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm format`, `pnpm format:check`, `pnpm test`, `pnpm check`.
 - Config: `src/lib/env.ts` reads every `NEXT_PUBLIC_` variable by name (so Next inlines it), with safe defaults; invalid values throw. Copy `.env.example` to `.env.local` to override. Never put secrets in `NEXT_PUBLIC_` variables.
 - The human's machine is **Windows** (PowerShell). If `pnpm` is blocked with "running scripts is disabled", run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` once, or use `pnpm.cmd`.
 - Backend toolchain, if you need a local validator: Anchor 0.31.1, Solana CLI 2.1.21, Node 20+.
@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `2.2 Client interface`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `2.3 Mock client`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -101,7 +101,9 @@ src/
 - The human watches the app in the Browser pane preview tab; leave it on the page being worked on.
 - **2.1** done: the data model is in `src/lib/breakglass/` (`primitives.ts`, `accounts.ts`, `events.ts`, `monitor.ts`, re-exported from `index.ts`). Field names match the IDL exactly (checked against `clients/ts/idl/breakglass.json` at backend commit `e52f9cd`); u64 is `bigint`, unix times are `number`, keys are base58 strings, Rust enums are string literals. Monitor types keep the API's snake_case JSON. `PendingConfig`'s `ConfigAction` fields are provisional until backend phase 4 documents them (raise at checkpoint A).
 - **2.2** done: `BreakglassClient` in `src/lib/breakglass/client.ts` lists every read (clock, configs, pause state, limiters, token balance, holds, pending changes, guardian ledgers, test-vault position, events, incidents) and every write (all 14 non-CPI Breakglass instructions, test-vault `deposit`/`withdraw`, monitor `ackIncident`), plus `subscribe` for change notifications. Writes sign with the connected wallet and reject with `ClientError`. `check_scope`/`check_outflow` are CPI-only, reached through `withdraw` and `claimHeld`.
-- Next step: **2.3**, the mock client with in-memory state and a simulated clock that applies the gate's rules.
+- **2.3** done: `src/lib/breakglass/rules/` ports the program's limiter and pause logic line for line from the backend Rust (`limiter.rs`, `pause_logic.rs`, `gate.rs`, `check_outflow.rs`, `claim_held.rs` at `e52f9cd`); screens can use its read helpers (`windowUsage`, `bucketsOldestFirst`, `effectiveCap`, `isScopePaused`, `budgetLeft`, `cooldownEnds`, …). `mock/engine.ts` is a synchronous in-memory chain (every write atomic: a failed one changes nothing); `mock/client.ts` (`MockClient`) wraps it in `BreakglassClient` and adds `setWallet` (role switcher, `MOCK_WALLETS` in `mock/seed.ts`), `advanceClock`, `reset` and 350 ms latency. `mock/seed.ts` builds the demo state by replaying actions at past times. `getBreakglassClient()` / `getMockClient()` in `create-client.ts` pick by data mode. Timelocked changes follow our provisional reading of phase 4 (`releaseHeld` proposes a `releaseHeld` action; `cancelConfig` closes the account and emits no event).
+- Tests: `pnpm test` (Node's built-in runner, no extra dependency) runs `src/**/*.test.ts`; `pnpm check` now includes it. Files under `src/lib/breakglass` import each other with explicit `.ts` extensions (tsconfig `allowImportingTsExtensions`) so Node can run them, and must not use the `@/` alias.
+- Next step: **2.4**, data hooks that return mock data and refresh after each write (use `subscribe`).
 
 ## The checklist
 
@@ -120,7 +122,7 @@ The checklist was first written when the product was imagined as a vault that ho
 | 1.3  | ✅     | Base components: button, input, panel, badge, dialog, toast, countdown, amount           | 1.2           | A components page shows each in light and dark                                 | Must     |
 | 2.1  | ✅     | TypeScript types for the program's accounts and events                                   | 0.3           | Types cover every account and event                                            | Must     |
 | 2.2  | ✅     | One client interface for every read and write                                            | 2.1           | The interface lists every instruction and read                                 | Must     |
-| 2.3  |        | Mock client with in-memory state and a simulated clock                                   | 2.2           | Every interface method works in mock mode                                      | Must     |
+| 2.3  | ✅     | Mock client with in-memory state and a simulated clock                                   | 2.2           | Every interface method works in mock mode                                      | Must     |
 | 2.4  |        | Data hooks                                                                               | 2.3           | Hooks return mock data and refresh after each write                            | Must     |
 | 3.1  |        | Wallet connection (Phantom, Solflare, Backpack)                                          | 0.1           | Connect and disconnect work on devnet                                          | Must     |
 | 3.2  |        | Devnet badge and wrong-network warning                                                   | 3.1           | Badge shows; warning appears on mainnet                                        | Must     |

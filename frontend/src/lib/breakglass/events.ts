@@ -10,7 +10,7 @@ import type {
   Signature,
   U64,
   UnixSeconds,
-} from "./primitives";
+} from "./primitives.ts";
 
 /** `kind` on a Paused event: 0 guardian, 1 auto-trip, 2 admin. */
 export type PauseKindCode = 0 | 1 | 2;

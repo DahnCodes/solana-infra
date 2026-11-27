@@ -20,14 +20,14 @@ import type {
   PendingWithdrawal,
   Position,
   ProtocolConfig,
-} from "./accounts";
-import type { BreakglassEvent, BreakglassEventRecord } from "./events";
+} from "./accounts.ts";
+import type { BreakglassEvent, BreakglassEventRecord } from "./events.ts";
 import type {
   AckRequest,
   Incident,
   IncidentDetail,
   IncidentStatus,
-} from "./monitor";
+} from "./monitor.ts";
 import type {
   Address,
   Bps,
@@ -37,7 +37,7 @@ import type {
   Signature,
   U64,
   UnixSeconds,
-} from "./primitives";
+} from "./primitives.ts";
 
 // Shared shapes --------------------------------------------------------------
 
