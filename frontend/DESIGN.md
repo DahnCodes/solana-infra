@@ -69,17 +69,23 @@ Status is always carried by a word or an icon too, never by colour alone.
 
 All three are open-licence Google Fonts, loaded through `next/font/google`. (Artific was considered; its trial licence is personal use only and its character set is incomplete.)
 
-Scale (size / line height):
+### Scale
 
-| Step      | Size / line | Use                                          |
-| --------- | ----------- | -------------------------------------------- |
-| `display` | 40 / 48     | Montserrat Light figures (countdown, usage)  |
-| `title`   | 32 / 40     | Page title, Schibsted 400                    |
-| `heading` | 24 / 32     | Card title, Schibsted 500                    |
-| `body-lg` | 18 / 28     | Card description                             |
-| `body`    | 16 / 24     | Default text                                 |
-| `small`   | 14 / 20     | Table cells, secondary detail                |
-| `label`   | 12 / 16     | Montserrat SemiBold labels, +0.04em tracking |
+The sizes come from the text styles of the human's Figma file "ENLGA Data and Payment Project" (Style guide page, frame `173:208`). That file sets them in Urbanist; Breakglass keeps the sizes and the 1.4 line height and applies them to the faces above, with one change the human asked for: `body` is 16px, not the file's 13px. Letter spacing is 0 except on labels.
+
+| Step      | Size / line (px) | Face and use                                                                    |
+| --------- | ---------------- | ------------------------------------------------------------------------------- |
+| `h1`      | 48 / 67          | Montserrat Light: hero figures (a hold's countdown, window usage on its page)   |
+| `h2`      | 40 / 56          | Schibsted 500: landing page headline                                            |
+| `h3`      | 33 / 46          | Schibsted 400: page title                                                       |
+| `h4`      | 28 / 39          | Montserrat Light: figures on dashboard cards; Schibsted 500: section titles     |
+| `h5`      | 23 / 32          | Schibsted 500: card title, dialog title                                         |
+| `title1`  | 19 / 27          | Schibsted 400: card description, lead text                                      |
+| `title2`  | 16 / 22          | Schibsted 500: nav items, form field labels, emphasised rows                    |
+| `body`    | 16 / 22          | Schibsted 400: default text, table cells, form fields, helper text              |
+| `caption` | 11 / 15          | Montserrat SemiBold, +0.04em: table headers, nav group names, chips, timestamps |
+
+`body` and `title2` share a size; `title2` is the medium-weight version for labels and emphasis. Nothing a person reads in sentences goes below 16px. `caption` is only ever Montserrat SemiBold; Montserrat Light is never used below `h4`, where thin strokes stop being legible.
 
 Amounts and countdowns use tabular figures so digits don't jump as they change. Addresses are shortened (`7xKp…3fQ`) and set in Schibsted, with a copy button; no monospace face.
 
@@ -98,7 +104,7 @@ Amounts and countdowns use tabular figures so digits don't jump as they change. 
 
 ## Components
 
-- **Buttons.** Primary: `primary` fill, `on-primary` label, one per view. Secondary: `surface` fill, 1px `border-strong`, `text` label. Quiet: text only. Labels in Montserrat SemiBold.
+- **Buttons.** Primary: `primary` fill, `on-primary` label, one per view. Secondary: `surface` fill, 1px `border-strong`, `text` label. Quiet: text only. Labels in Montserrat SemiBold at `body` size (16px).
 - **Chips.** `surface-inset` fill, `text` label, 6px radius. A status chip adds a status dot.
 - **Window meter.** A row of vertical ticks, one per sub-bucket of the rolling window (12), filled in `primary` up to usage, with the cap marked as a `tripped` tick. Borrowed from Parallel's progress bar.
 - **Step timeline.** A vertical line with a node per stage, for a hold's life (queued, frozen, released or rejected, claimed) and a timelocked change (proposed, waiting, executable, executed or vetoed).
