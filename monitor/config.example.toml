@@ -1,0 +1,22 @@
+# Copy to config.toml and edit. Secrets (bot tokens) go in .env, not here.
+
+[network]
+# Two or more independent endpoints. The monitor runs one ingestor per entry.
+rpc_urls = ["http://127.0.0.1:8899"]
+ws_urls = ["ws://127.0.0.1:8900"]
+
+[protocol]
+name = "test-vault"
+breakglass_program = "8Y9J7ZBRHZ9b8Cr5ntMzwmA6KtwfPXdF1hLxuDE59xZ8"
+protected_program = "32m1FAwDhkApLNp7TuCdZqmT8gYn8yxEJAW74SokUBXv"
+vault_token_accounts = []
+
+[detectors]
+window_warning_pct = 50
+window_high_pct = 80
+heartbeat_timeout_secs = 30
+
+[alerts]
+# Sinks enabled for this run: "stdout", "telegram", "webhook"
+sinks = ["stdout"]
+critical_repage_secs = 120

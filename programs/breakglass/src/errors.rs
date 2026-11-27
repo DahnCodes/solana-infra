@@ -1,0 +1,45 @@
+use anchor_lang::prelude::*;
+
+#[error_code]
+pub enum BreakglassError {
+    #[msg("Scope is paused")]
+    ScopePaused,
+    #[msg("Scope id out of range (0..64)")]
+    InvalidScope,
+    #[msg("Scope is marked unpausable")]
+    ScopeUnpausable,
+    #[msg("Signer is not allowed to perform this action")]
+    Unauthorized,
+    #[msg("Too many guardians")]
+    TooManyGuardians,
+    #[msg("Pause duration exceeds the guardian maximum")]
+    PauseTooLong,
+    #[msg("Guardian renewal cap reached; admin must extend")]
+    RenewCapReached,
+    #[msg("Guardian is in cooldown")]
+    GuardianCooldown,
+    #[msg("Guardian pause budget for this period is used up")]
+    PauseBudgetExhausted,
+    #[msg("Too many active pauses")]
+    TooManyActivePauses,
+    #[msg("Held withdrawal is not released yet")]
+    HoldNotReleased,
+    #[msg("Held withdrawal is frozen")]
+    HoldFrozen,
+    #[msg("Held withdrawal is not in a claimable state")]
+    HoldInvalidState,
+    #[msg("Caller is not the registered protected program")]
+    InvalidCaller,
+    #[msg("Timelock is still active")]
+    TimelockActive,
+    #[msg("Timelock value out of allowed range")]
+    InvalidTimelock,
+    #[msg("Pending change was vetoed")]
+    Vetoed,
+    #[msg("Protocol invariant violated")]
+    InvariantViolated,
+    #[msg("Arithmetic overflow")]
+    MathOverflow,
+    #[msg("Account is not executable")]
+    NotExecutable,
+}

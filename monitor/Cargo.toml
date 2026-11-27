@@ -1,0 +1,27 @@
+# Separate workspace on purpose: Solana client crates and Anchor program crates
+# often need different dependency versions. See docs/BUILD_PLAN.md.
+[workspace]
+
+[package]
+name = "breakglass-monitor"
+version = "0.1.0"
+edition = "2021"
+description = "Off-chain monitor, alerting and guardian bot for Breakglass"
+
+[[bin]]
+name = "breakglass-monitor"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Added in later phases (see BUILD_PLAN.md):
+# Phase 5: solana-client / solana-pubsub-client (match the Solana CLI version), sqlx (postgres), axum, reqwest, hmac, sha2
+# Phase 6: guardian signer (solana-sdk keypair; KMS trait later)

@@ -1,0 +1,30 @@
+[package]
+name = "test-vault"
+version = "0.1.0"
+description = "Example protocol protected by Breakglass. Has a planted bug behind a feature, for attack tests only."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "test_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "breakglass-sdk/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+# DANGER: test only. Skips the user-position check in `withdraw` so attack tests have a real bug to exploit.
+planted-bug = []
+
+[dependencies]
+anchor-lang = { version = "=0.31.1", features = ["init-if-needed"] }
+anchor-spl = "=0.31.1"
+breakglass-sdk = { path = "../../crates/breakglass-sdk" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

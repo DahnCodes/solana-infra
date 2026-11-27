@@ -1,0 +1,14 @@
+# scripts/
+
+Helper and demo scripts that you run by hand against a local validator or devnet. Each phase of `docs/BUILD_PLAN.md` adds one:
+
+| Script | Phase | What it shows |
+| --- | --- | --- |
+| `demo-pause.ts` | 1 | Guardian pause blocks a withdraw, unpause restores it |
+| `demo-outflow.ts` | 2 | Allow / Hold / auto-trip in action |
+| `attack-big-drain.ts` | 3 | Planted bug can't drain the vault |
+| `demo-timelock.ts` | 4 | Proposals wait, early execute fails, guardian veto works |
+| `attack-screened.ts` | 6 | Guardian bot freezes attacker withdrawals |
+| `attacks/*.ts` | 7 | Full attack suite, `yarn test:attacks` |
+
+Run with: `yarn ts-node scripts/<name>.ts` (local validator running, programs deployed).

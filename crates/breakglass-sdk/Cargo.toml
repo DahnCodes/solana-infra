@@ -1,0 +1,12 @@
+[package]
+name = "breakglass-sdk"
+version = "0.1.0"
+description = "Helpers for protocols integrating the Breakglass gate"
+edition = "2021"
+
+[features]
+idl-build = ["anchor-lang/idl-build", "breakglass/idl-build"]
+
+[dependencies]
+anchor-lang = "=0.31.1"
+breakglass = { path = "../../programs/breakglass", features = ["cpi"] }

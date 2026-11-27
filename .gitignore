@@ -1,0 +1,19 @@
+# Rust / Anchor
+target/
+**/*.rs.bk
+.anchor/
+test-ledger/
+.DS_Store
+
+# Node
+node_modules/
+yarn-error.log
+
+# Monitor
+monitor/target/
+monitor/.env
+
+# Keys: NEVER commit keypairs
+*-keypair.json
+id.json
+keys/
