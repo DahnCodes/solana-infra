@@ -1,6 +1,21 @@
 # Breakglass design direction
 
-Approved in step 1.1 (Nov 27 2026). Step 1.2 turns this into the tokens file; after that, every screen uses tokens, never raw values.
+Approved in step 1.1 (Nov 27 2026). The values live in code in one file, `src/app/tokens.css` (step 1.2). Every screen uses its utilities, never raw values.
+
+## Tokens in code
+
+Tailwind's default palette, type sizes, radii and shadows are switched off, so only these utilities exist:
+
+| Kind   | Utilities                                                                                                                                                                                                  |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Colour | `canvas`, `surface`, `surface-inset`, `line`, `line-strong`, `ink`, `ink-secondary`, `ink-muted`, `primary`, `primary-hover`, `on-primary`, `open`, `held`, `tripped` (as `bg-*`, `text-*`, `border-*`, …) |
+| Face   | `font-sans` (Schibsted Grotesk, the default), `font-label` and `font-figure` (Montserrat)                                                                                                                  |
+| Size   | `text-h1` … `text-h5`, `text-title1`, `text-title2`, `text-body`, `text-caption`                                                                                                                           |
+| Radius | `rounded-control`, `rounded-panel`, `rounded-card`, `rounded-full`                                                                                                                                         |
+| Shadow | `shadow-float`                                                                                                                                                                                             |
+| Layout | `w-sidebar`, `max-w-content`; spacing is Tailwind's 4px step                                                                                                                                               |
+
+Themes follow the system setting. `data-theme="light"` or `data-theme="dark"` on any element forces that theme for everything inside it.
 
 ## Direction
 
