@@ -87,11 +87,13 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `0.3 Env config`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `1.1 Design direction`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
-- Next step: **1.1**, pick a design direction (consult the design skills first; the human approves it).
+- **1.1** done: the human chose a monochrome direction modelled on the Parallel dashboard, with charcoal as the primary colour, Schibsted Grotesk as the main face and Montserrat SemiBold and Light. It is written down in `DESIGN.md`; follow it for all design work. Artific was rejected (personal-use trial licence, incomplete character set).
+- After every finished step, tick it on the checklist sheet and in the table below (the human's standing request).
+- Next step: **1.2**, turn `DESIGN.md` into one tokens file, light and dark.
 
 ## The checklist
 
@@ -105,7 +107,7 @@ The checklist was first written when the product was imagined as a vault that ho
 | 0.2  | ✅     | ESLint, Prettier and the folders `app`, `components`, `lib`, `hooks`                     | 0.1           | Lint passes and the folders are committed                                      | Must     |
 | 0.3  | ✅     | Env config: RPC URL, program IDs, USDC mint, data mode, monitor URL                      | 0.1           | `.env.example` committed and the app reads it                                  | Must     |
 | 0.4  | ✅     | Push to a public GitHub repo                                                             | 0.1           | The repo link opens for anyone                                                 | Must     |
-| 1.1  |        | Review the installed design skills and pick a direction: colour, type, layout            | 0.1           | The human approves the direction                                               | Must     |
+| 1.1  | ✅     | Review the installed design skills and pick a direction: colour, type, layout            | 0.1           | The human approves the direction                                               | Must     |
 | 1.2  |        | Turn the direction into tokens (colours, type scale, spacing), light and dark            | 1.1           | One tokens file; no colours defined anywhere else                              | Must     |
 | 1.3  |        | Base components: button, input, panel, badge, dialog, toast, countdown, amount           | 1.2           | A components page shows each in light and dark                                 | Must     |
 | 2.1  |        | TypeScript types for the program's accounts and events                                   | 0.3           | Types cover every account and event                                            | Must     |
