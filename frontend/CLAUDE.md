@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `3.3 Faucet helper`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `4.1 App shell`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -109,7 +109,8 @@ src/
 - **3.2** done: `NetworkBadge` (cluster from `NEXT_PUBLIC_SOLANA_CLUSTER`, plus "Mock data" in mock mode) and `NetworkWarning` (root layout, every page) in `src/components/network/`. The warning shows when the app is set to mainnet, or when the RPC's genesis hash belongs to another cluster (`src/lib/cluster.ts`, tested). Wallets don't expose their selected network over the Wallet Standard, so the wallet side is a reminder in the connect dialog; a wrong-network wallet will surface as a failed transaction in phase 6. The badge sits on `/mock` until the app shell (4.1).
 - Env changes need a dev server restart (Next picked up a new `.env.local` but not its deletion).
 - **3.3** done: `Faucet` (in the wallet's account dialog) shows the wallet's SOL and test-USDC balances. Devnet's RPC airdrop is closed (410, "Request test SOL at https://faucet.solana.com"), so on devnet "Get devnet SOL" copies the address and opens the web faucet, and the balance refreshes on return; localnet airdrops directly. Test USDC: `MockClient.requestTestTokens` credits 10,000 mock USDC. **Open for checkpoint B:** live test USDC needs the backend's test mint and a way to mint it (a faucet script, endpoint or mint authority); ask the backend at checkpoint B.
-- Next step: **4.1**, app shell: header, navigation, wallet button, network badge. Phase 4 builds the screens.
+- **4.1** done: app pages live in the `src/app/(app)/` route group, whose layout wraps them in `AppShell` (`src/components/shell/`) and one `ToastProvider`. Desktop (lg+): `w-sidebar` sidebar with `Logo`, `SideNav` (groups in `nav-items.ts`) and `DemoControls` (mock only: acting-as select, clock +1 h / +6 h, reset); top bar with `NetworkBadge` and `WalletButton`. Below lg: top bar with a menu button that opens the same nav, badges and demo controls. Pages start with `PageHeader`. `/dashboard`, `/withdraw`, `/holds`, `/rules`, `/activity`, `/register` are `PlannedScreen` placeholders until their steps; `/mock` moved into the group. `/` (landing, 4.2) and `/components` stay outside the shell.
+- Next step: **4.2**, landing page with Connect wallet and Open demo (replaces the setup-check page at `/`).
 
 ## The checklist
 
@@ -133,7 +134,7 @@ The checklist was first written when the product was imagined as a vault that ho
 | 3.1  | ✅     | Wallet connection (Phantom, Solflare, Backpack)                                          | 0.1           | Connect and disconnect work on devnet                                          | Must     |
 | 3.2  | ✅     | Devnet badge and wrong-network warning                                                   | 3.1           | Badge shows; warning appears on mainnet                                        | Must     |
 | 3.3  | ✅     | Faucet helper for devnet SOL and test USDC                                               | 3.1           | A first-time judge can fund a wallet from the app                              | Must     |
-| 4.1  |        | App shell: header, navigation, wallet button, network badge                              | 1.3, 3.2      | Shell renders on phone and desktop                                             | Must     |
+| 4.1  | ✅     | App shell: header, navigation, wallet button, network badge                              | 1.3, 3.2      | Shell renders on phone and desktop                                             | Must     |
 | 4.2  |        | Landing page with Connect wallet and Open demo                                           | 4.1           | Explains Breakglass in one line; both buttons work                             | Must     |
 | 4.3  |        | Create vault flow: form, review, confirm                                                 | 2.4, 4.1      | Works in mock mode                                                             | Must     |
 | 4.4  |        | Vault dashboard                                                                          | 2.4, 4.1      | Figures match mock state and update after each action                          | Must     |

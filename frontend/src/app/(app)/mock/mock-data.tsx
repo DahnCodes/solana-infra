@@ -8,9 +8,7 @@ import { Button } from "@/components/button";
 import { Countdown } from "@/components/countdown";
 import { Input } from "@/components/input";
 import { InsetPanel, Panel } from "@/components/panel";
-import { ToastProvider, useToast } from "@/components/toast";
-import { NetworkBadge } from "@/components/network/network-badge";
-import { WalletButton } from "@/components/wallet/wallet-button";
+import { useToast } from "@/components/toast";
 import {
   roleOf,
   useChainNow,
@@ -64,11 +62,7 @@ const holdStatus: Record<HoldStatus, Status | undefined> = {
 };
 
 export function MockData() {
-  return (
-    <ToastProvider>
-      <Body />
-    </ToastProvider>
-  );
+  return <Body />;
 }
 
 function Body() {
@@ -110,12 +104,6 @@ function Controls() {
     <Panel
       title="Demo controls"
       description="Act as another wallet, or move the simulated clock forward. A connected real wallet acts as a new user until you disconnect it."
-      actions={
-        <>
-          <NetworkBadge />
-          <WalletButton />
-        </>
-      }
     >
       <div className="flex flex-col gap-6">
         <div className="flex flex-wrap gap-2">
