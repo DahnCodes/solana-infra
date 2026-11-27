@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Breakglass frontend
 
-## Getting Started
+The web app for Breakglass: a dashboard for protocols, admins and guardians to watch the outflow gate, pauses, held withdrawals and timelocked config changes.
 
-First, run the development server:
+The backend (Anchor program, TypeScript client and monitor) lives in the rest of this repo. The frontend builds against the contract in `../docs/FRONTEND.md` on the `backend` branch.
+
+## Run it
+
+Needs Node 20+ and pnpm.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm dev        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Scripts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Command             | What it does                                        |
+| ------------------- | --------------------------------------------------- |
+| `pnpm dev`          | Starts the dev server                               |
+| `pnpm build`        | Builds for production                               |
+| `pnpm lint`         | Runs ESLint                                         |
+| `pnpm typecheck`    | Runs the TypeScript compiler without emitting files |
+| `pnpm format`       | Formats every file with Prettier                    |
+| `pnpm format:check` | Fails if any file isn't formatted                   |
+| `pnpm check`        | Lint, typecheck and format check together           |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run `pnpm check` before every commit.
 
-## Learn More
+## Folders
 
-To learn more about Next.js, take a look at the following resources:
+```
+src/
+  app/          routes, layouts and pages (Next.js App Router)
+  components/   UI components shared across pages
+  hooks/        React hooks, mostly for reading and writing Breakglass data
+  lib/          plain TypeScript: config, data clients, formatting helpers
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## How we build
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+We work through a step-by-step checklist, one commit per step, named after the step (for example `0.2 Lint, format and folders`). See the build checklist sheet for the order and what each step needs first.
