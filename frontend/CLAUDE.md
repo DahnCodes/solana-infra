@@ -90,7 +90,7 @@ src/
 - Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `0.3 Env config`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
-- `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. That change is left uncommitted until the human decides whether to keep the setting.
+- `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
 - Next step: **1.1**, pick a design direction (consult the design skills first; the human approves it).
 
 ## The checklist
