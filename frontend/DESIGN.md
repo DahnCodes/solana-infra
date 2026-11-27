@@ -6,14 +6,14 @@ Approved in step 1.1 (Nov 27 2026). The values live in code in one file, `src/ap
 
 Tailwind's default palette, type sizes, radii and shadows are switched off, so only these utilities exist:
 
-| Kind   | Utilities                                                                                                                                                                                                  |
-| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Colour | `canvas`, `surface`, `surface-inset`, `line`, `line-strong`, `ink`, `ink-secondary`, `ink-muted`, `primary`, `primary-hover`, `on-primary`, `open`, `held`, `tripped` (as `bg-*`, `text-*`, `border-*`, …) |
-| Face   | `font-sans` (Schibsted Grotesk, the default), `font-label` and `font-figure` (Montserrat)                                                                                                                  |
-| Size   | `text-h1` … `text-h5`, `text-title1`, `text-title2`, `text-body`, `text-caption`                                                                                                                           |
-| Radius | `rounded-control`, `rounded-panel`, `rounded-card`, `rounded-full`                                                                                                                                         |
-| Shadow | `shadow-float`                                                                                                                                                                                             |
-| Layout | `w-sidebar`, `max-w-content`; spacing is Tailwind's 4px step                                                                                                                                               |
+| Kind   | Utilities                                                                                                                                                                                                                             |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Colour | `canvas`, `surface`, `surface-inset`, `line`, `line-strong`, `ink`, `ink-secondary`, `ink-muted`, `primary`, `primary-hover`, `on-primary`, `open`, `held`, `tripped`, `scrim` (dialog backdrop) (as `bg-*`, `text-*`, `border-*`, …) |
+| Face   | `font-sans` (Schibsted Grotesk, the default), `font-label` and `font-figure` (Montserrat)                                                                                                                                             |
+| Size   | `text-h1` … `text-h5`, `text-title1`, `text-title2`, `text-body`, `text-caption`                                                                                                                                                      |
+| Radius | `rounded-control`, `rounded-panel`, `rounded-card`, `rounded-full`                                                                                                                                                                    |
+| Shadow | `shadow-float`                                                                                                                                                                                                                        |
+| Layout | `w-sidebar`, `max-w-content`; spacing is Tailwind's 4px step                                                                                                                                                                          |
 
 Themes follow the system setting. `data-theme="light"` or `data-theme="dark"` on any element forces that theme for everything inside it.
 
@@ -129,7 +129,7 @@ Amounts and countdowns use tabular figures so digits don't jump as they change. 
 
 ## Icons and imagery
 
-- One outline icon set at 1.5px stroke, 20px in nav and 16px inline. Proposed: Lucide (`lucide-react`), to be confirmed when step 1.3 adds it.
+- One outline icon set: Lucide (`lucide-react`), 20px in nav and dialogs, 16px inline. Decorative icons get `aria-hidden`; icon-only buttons get an `aria-label`.
 - No illustrations or photos. Diagrams of the gate are drawn as simple line art in `text` and `border`.
 
 ## Words

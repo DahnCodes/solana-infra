@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `1.2 Design tokens`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `1.3 Base components`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -95,7 +95,11 @@ src/
 - After every finished step, tick it on the checklist sheet and in the table below (the human's standing request).
 - **1.2** done: every colour, type size, radius and shadow is in `src/app/tokens.css` (light and dark via `light-dark()`); Tailwind's defaults are switched off, so only token utilities exist. Both fonts load through `next/font/google` and have tabular figures (`tabular-nums`).
 - If a CSS change doesn't show up in `pnpm dev`, restart the dev server; Turbopack once kept serving a stale `globals.css`.
-- Next step: **1.3**, base components and a components page in light and dark. Ask before adding `lucide-react` for icons.
+- **1.3** done: `src/components/` has `Button`, `Input`, `Panel`/`InsetPanel`, `Badge`, `Dialog` (native `<dialog>`), `ToastProvider`/`useToast`/`ToastCard`, `Countdown` and `Amount`; `/components` shows each in light and dark. Icons are `lucide-react` (approved). Helpers: `lib/cx.ts`, `lib/format.ts` (`formatUnits` for u64 base units, `formatDuration`, `formatDateTime`), `hooks/use-now.ts`.
+- Live time: never read the clock during server render (Cache Components rejects it). `useNow()` returns null on the server and ticks in the browser; `Countdown` also takes a `now` prop for the mock clock in 2.3.
+- A `data-theme` on an inner element works because `tokens.css` declares the tokens again on `[data-theme]` (Tailwind compiles `light-dark()` into variables that resolve where declared). Keep that selector if you edit the file.
+- The human watches the app in the Browser pane preview tab; leave it on the page being worked on.
+- Next step: **2.1**, TypeScript types for the program's accounts and events (read `docs/FRONTEND.md` on the `backend` branch first).
 
 ## The checklist
 
@@ -111,7 +115,7 @@ The checklist was first written when the product was imagined as a vault that ho
 | 0.4  | ✅     | Push to a public GitHub repo                                                             | 0.1           | The repo link opens for anyone                                                 | Must     |
 | 1.1  | ✅     | Review the installed design skills and pick a direction: colour, type, layout            | 0.1           | The human approves the direction                                               | Must     |
 | 1.2  | ✅     | Turn the direction into tokens (colours, type scale, spacing), light and dark            | 1.1           | One tokens file; no colours defined anywhere else                              | Must     |
-| 1.3  |        | Base components: button, input, panel, badge, dialog, toast, countdown, amount           | 1.2           | A components page shows each in light and dark                                 | Must     |
+| 1.3  | ✅     | Base components: button, input, panel, badge, dialog, toast, countdown, amount           | 1.2           | A components page shows each in light and dark                                 | Must     |
 | 2.1  |        | TypeScript types for the program's accounts and events                                   | 0.3           | Types cover every account and event                                            | Must     |
 | 2.2  |        | One client interface for every read and write                                            | 2.1           | The interface lists every instruction and read                                 | Must     |
 | 2.3  |        | Mock client with in-memory state and a simulated clock                                   | 2.2           | Every interface method works in mock mode                                      | Must     |

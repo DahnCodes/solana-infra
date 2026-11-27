@@ -11,7 +11,15 @@
 
 :root {
   color-scheme: light dark;
+}
 
+/*
+ * Declared again on every [data-theme] element: the CSS compiler turns
+ * light-dark() into variables that resolve where they are declared, so a
+ * theme set lower in the page needs its own copy of the tokens.
+ */
+:root,
+[data-theme] {
   --bg-canvas: light-dark(#f2f2f2, #161616);
   --bg-surface: light-dark(#ffffff, #1f1f1f);
   --bg-surface-inset: light-dark(#f7f7f7, #1a1a1a);
@@ -31,6 +39,9 @@
   --status-open: light-dark(#1e8e5a, #3dbf83);
   --status-held: light-dark(#b26b00, #e0a33a);
   --status-tripped: light-dark(#c5221f, #f0625d);
+
+  /* Dims the page behind a dialog */
+  --scrim: light-dark(rgb(35 35 35 / 0.4), rgb(0 0 0 / 0.6));
 
   --shadow-near: light-dark(rgb(35 35 35 / 0.08), rgb(0 0 0 / 0.3));
   --shadow-far: light-dark(rgb(35 35 35 / 0.12), rgb(0 0 0 / 0.45));
@@ -66,6 +77,7 @@
   --color-open: var(--status-open);
   --color-held: var(--status-held);
   --color-tripped: var(--status-tripped);
+  --color-scrim: var(--scrim);
   --color-transparent: transparent;
   --color-current: currentColor;
 
