@@ -73,6 +73,18 @@ pub struct WithdrawalScreenQueued {
     pub release_at: i64,
 }
 
+/// A withdrawal that would have crossed the window cap was held (and the scope
+/// auto-tripped; `LimitTripped` and `Paused` are emitted with it).
+#[event]
+pub struct LimitHoldQueued {
+    pub config: Pubkey,
+    pub hold: Pubkey,
+    pub mint: Pubkey,
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub release_at: i64,
+}
+
 #[event]
 pub struct LimitTripped {
     pub config: Pubkey,

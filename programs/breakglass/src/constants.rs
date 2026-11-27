@@ -32,6 +32,10 @@ pub const DEFAULT_WINDOW_SECS: i64 = HOUR;
 pub const DEFAULT_HOLD_SECS: i64 = 6 * HOUR;
 pub const DEFAULT_SCREEN_SECS: i64 = 120;
 pub const BPS_DENOMINATOR: u64 = 10_000;
+/// Default instant allowance: no screening (zero-loss screen-all mode sets 0, Phase 3).
+pub const DEFAULT_INSTANT_ALLOWANCE: u64 = u64::MAX;
+/// `ScopePause.reason` / `Paused.reason` written by an auto-trip.
+pub const AUTO_TRIP_REASON: u16 = 1;
 
 // Timelock
 pub const MIN_TIMELOCK_SECS: i64 = 24 * HOUR;

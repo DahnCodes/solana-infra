@@ -6,7 +6,7 @@ Claude Code updates this file at the end of every phase (see docs/BUILD_PLAN.md)
 | --- | --- | --- | --- |
 | 0 Toolchain and skeleton | Done (2026-11-27) | `anchor build && anchor test` (1 passing), `cargo test -p breakglass`, `cd monitor && cargo test` (5 passing), `scripts/sync-client.sh`, `cd clients/ts && yarn build` | Toolchain pinned, lockfiles committed, program IDs synced. See below. |
 | 1 Config, roles, pauses | Done (2026-11-27) | `cargo test -p breakglass` (20 passing), `anchor test` (12 passing), `yarn ts-node scripts/demo-pause.ts` | See Phase 1 notes |
-| 2 Outflow gate and holds | Not started | | |
+| 2 Outflow gate and holds | Done (2026-11-27) | `cargo test -p breakglass` (33 passing), `anchor test` (31 passing), `yarn ts-node scripts/demo-outflow.ts` | See Phase 2 notes |
 | 3 Zero-loss mode | Not started | | |
 | 4 Timelocks | Not started | | |
 | 5 Monitor v1 | Not started | | |
@@ -65,7 +65,51 @@ yarn ts-node scripts/demo-pause.ts   # ... withdraw blocked: ScopePaused ... wit
 - "Optional bond" for guardians (spec, griefing limits) isn't built. It needs token custody or a lamport escrow, and Breakglass must never hold funds. Revisit with the human if wanted.
 - Adding a guardian and changing the pause policy are timelocked actions (Phase 4). Until then the policy is always the spec defaults.
 
-**Open issue for the human (not changed):** `initialize_config` lets *any* signer register *any* executable program and become its admin, so a squatter could front-run a protocol's registration. The protocol's own check (`config.protected_program == crate::ID`) doesn't catch this. Suggested fix: require the signer to be the protected program's upgrade authority (read its ProgramData account). That changes `initialize_config`'s accounts, so it needs a go-ahead.
+**Open issue for the human:** `initialize_config` let any signer register any program and become its admin. Fixed in Phase 2 (go-ahead given), see below.
+
+## Phase 2 notes
+
+**Built:**
+- **`initialize_config` fix:** the protected program's upgrade authority must sign (new accounts `upgradeAuthority`, `protectedProgramData`). Nobody else can squat a protocol's config. A program with no upgrade authority can't be registered.
+- **Instructions:** `init_flow_limiter` (admin), `check_outflow` (CPI from the protocol's gate PDA, returns Allow/Hold), `claim_held` (CPI + owner), `freeze_held` (guardian or admin), `reject_held` (admin through the protocol, which restores the position).
+- **Limiter math:** pure functions in `programs/breakglass/src/limiter.rs`, with 10 unit tests and 3 property tests: window never under-counts, cap breach always holds, no overflow at `u64::MAX`. Calls in the same transaction or slot all count.
+- **Holds:** a PendingWithdrawal is created only on Hold, as the PDA `["hold", config, owner, hold_nonce]`, paid by the user. `kind` records why: large / limit / screen.
+- **Auto-trip:** on the first breach, the gate returns Hold, pauses the limiter's scope for `auto_trip_secs` (an AutoTrip entry, admin-only to lift), and emits `LimitTripped` + `Paused` + `LimitHoldQueued`.
+- **SDK** (`crates/breakglass-sdk`): `check_outflow`, `claim_held` and `reject_held` helpers. They read the decision from return data only if it came from Breakglass, and turn anything unexpected into an error.
+- **test-vault:**
+  - `withdraw(amount, hold_nonce)` goes through `check_outflow`. Allow → transfer. Hold → the position is reduced and nothing moves.
+  - new `claim_held` and `reject_held`
+  - Breakglass accounts use a `bg_` prefix, plus `gate_signer`.
+- **TS client:** errors 6023–6025, `findGateSignerPda`, `findEventAuthorityPda`, `outflowAccounts()`, `randomNonce()`, and `limiter.ts` (`windowUsage`, `effectiveCap`, `effectiveThreshold`, `bucketWidth`).
+- **Tests:**
+  - `tests/outflow.ts`, 17 tests: every Phase 2 acceptance test, plus claim-over-cap, screen-all, wrong-seed account, wrong limiter, wrong hold PDA, another protocol's config, direct `check_outflow` call, and `init_flow_limiter` validation.
+  - `tests/breakglass.ts`: 2 new tests for the `initialize_config` fix.
+- **Fixture:** `tests/fixtures/fake-pause-state.json` (from `scripts/gen-fixtures.js`) is a valid unpaused PauseState owned by the Token program, preloaded by Anchor.toml.
+- **Demos:** `scripts/demo-outflow.ts` (the manual check), and `scripts/demo-common.ts` shared with `demo-pause.ts` (updated for the new withdraw accounts).
+
+**Test commands:**
+```bash
+cargo test -p breakglass     # 33 passing (limiter + pause rules)
+anchor test                  # 31 passing, about 65s
+# manual check
+solana-test-validator --reset        # terminal 1
+anchor deploy                        # terminal 2
+yarn ts-node scripts/demo-outflow.ts
+# 1. small withdraw ALLOWED (+50 tokens)
+# 2. large withdraw HELD until <time> (+0 tokens, hold <address>)
+# 3. claim too early: HoldNotReleased
+# 4. 20 chunked withdraws: first 9 allowed, then HELD and LimitTripped; the remaining 10 blocked: ScopePaused
+```
+The demo leaves WITHDRAW auto-tripped (handy for UI work). The next run, and `demo-pause.ts`, lift it first.
+
+**Toolchain/config changes:** `Anchor.toml` has `[test] upgradeable = true`, so `anchor test` loads programs with the wallet as upgrade authority, the same as `anchor deploy`. This is required by the `initialize_config` fix. It also preloads the fake PauseState fixture.
+
+**`invoke_signed` in `programs/breakglass`:** one call, `create_hold` in `check_outflow.rs`. It's the system program's `create_account`, signed by the hold PDA's own seeds so the account can be created. No tokens are moved, and Breakglass still holds no token authority. (A grep for `token::` / `transfer` in `programs/breakglass` finds only comments.)
+
+**Deferred:**
+- `release_held` stays 🔜: Phase 4 adds it as a timelocked action. `claim_held` already accepts `Released` holds (no cap check, still recorded in the window).
+- Zero-loss screening: the on-chain part landed now (see Decisions). Phase 3 adds the invariants, the planted-bug tests and the guardian-freezes-all scenario.
+- The spec's "gate's decision diagram" isn't in the repo copy of SPEC.md. I followed the `check_outflow` row of the instruction table instead.
 
 ## Decisions
 
@@ -73,6 +117,18 @@ yarn ts-node scripts/demo-pause.ts   # ... withdraw blocked: ScopePaused ... wit
 
 - 2026-11-27 (Phase 0): `Cargo.lock`, `yarn.lock` and `clients/ts/yarn.lock` are committed. Without a lockfile cargo resolved crates that need edition 2024 (`blake3 1.8` → `digest 0.11` → `block-buffer 0.12`), which the Solana 2.1 platform-tools (cargo 1.79) can't build.
 - 2026-11-27 (Phase 0): the on-chain crates declare `rust-version = "1.79"`, so `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` keeps to compatible versions. `blake3` is pinned to 1.5.5 in `Cargo.lock` because 1.8.x doesn't declare an MSRV. If a future `cargo update` breaks `anchor build`, re-pin it with `cargo update -p blake3 --precise 1.5.5`.
+- 2026-11-27 (Phase 2): **Deny is an error, not a return value.** A paused scope makes `check_outflow` / `claim_held` fail inside Breakglass with `ScopePaused`, so the failing program is Breakglass and code 6000 can't be confused with the protocol's own 6000+ errors. Deny changes no state, so nothing is lost. `Decision::Deny` stays in the enum, and the SDK maps it to `ScopePaused` too.
+- 2026-11-27 (Phase 2): **the protocol picks the hold nonce** (`check_outflow(..., hold_nonce)`), and the hold PDA is passed on every call but created only on Hold. The account must be in the transaction before the decision is known. A Breakglass-side counter would either write-lock the config on every withdraw or race between users. The spec's `mint` arg was dropped: the limiter account's seeds already bind the mint.
+- 2026-11-27 (Phase 2): **the bucket width is `ceil(window_secs / 11)`**, so 12 buckets (11 full plus 1 partial) always cover at least `window_secs`. The window can over-count by up to one bucket (about 5.5 minutes on 1h) but never under-counts. The spec's "5 minutes each for a 1h window" would under-count by up to one bucket.
+- 2026-11-27 (Phase 2): **claims count toward the window and can trip it.** Otherwise held withdrawals would get around the cap once their hold ends, and the cap guarantee would depend on someone freezing them (that is, on the monitor being up). A claim that would cross the cap auto-trips the scope and returns Hold, the hold stays `queued`, and nothing moves. Released (Phase 4, timelocked) holds aren't capped again, but they are recorded.
+- 2026-11-27 (Phase 2): **decision order: paused → threshold → cap → screening.** A large withdrawal is held for size without counting or tripping. A breach trips even in screen-all mode. Held amounts don't count until claimed.
+- 2026-11-27 (Phase 2): **one limiter per mint gates exactly one scope** (`limiter.scope`; `check_outflow` with another scope fails `InvalidScope`), and a breach trips that scope for **every** mint, because pauses are per scope. That's the stricter reading of "auto-pauses the scope".
+- 2026-11-27 (Phase 2): **`check_outflow` write-locks `PauseState`** (it may auto-trip), so all mints of one protocol share that write lock. This trades the spec's per-mint contention goal for a global scope trip. If benchmarks show contention, a trip flag on the limiter checked by `check_scope` could replace it later.
+- 2026-11-27 (Phase 2): **the large threshold also has a bps-of-balance part** (`large_threshold_bps`, new field), from the spec's "an amount plus a share of TVL (e.g. 2%)". The effective threshold is the *lower* of the two (stricter). 0 bps = absolute only. `cap_bps_of_vault` 0 likewise means no balance cap (the absolute cap must be > 0).
+- 2026-11-27 (Phase 2): **`instant_allowance` screening is enforced now**, not in Phase 3. `init_flow_limiter` lets the admin set it from Phase 2, and ignoring a set value would fail open. It defaults to `u64::MAX` (no screening).
+- 2026-11-27 (Phase 2): **`claim_held` requires the hold owner's signature**, on top of the protocol's gate signer. `reject_held` requires the protocol's gate signer, so a rejection always goes through the protocol and restores the user's position atomically. A direct Breakglass-only reject would strand the user's claim.
+- 2026-11-27 (Phase 2): **`freeze_held` is open to the admin as well as guardians** (freezing only tightens), and only works on `queued` holds.
+- 2026-11-27 (Phase 2): **`initialize_config` needs a separate `upgrade_authority` signer** rather than requiring the admin to be the upgrade authority, so the admin can still be a different multisig. The upgrade authority approves the registration.
 - 2026-11-27 (Phase 1): **one pause entry per (scope, kind, paused_by)**, not one per scope. Overlapping pauses by different parties stay separate, so "the guardian can lift only its own pause" holds by construction.
 - 2026-11-27 (Phase 1): **a guardian can unpause a scope only if every running pause on it is its own.** If an admin, auto-trip or other guardian pause also covers the scope, the guardian gets `Unauthorized`, even though it could in principle remove just its own entry. This keeps `Unpaused` meaning "these scopes are now open", and the guardian can only ever slow things down.
 - 2026-11-27 (Phase 1): **cooldown is measured from the scheduled end** (`last_pause_end`) and also blocks new pauses while one of the guardian's own pauses is running. Lifting a pause early gives no cooldown credit and no budget refund. This is the stricter reading of "6h cooldown after a guardian pause ends". Otherwise a guardian could chain pauses across scopes and get around the renew cap. Consequence: to pause several scopes, a guardian (or the Phase 6 bot) must put them in one call, or ask the admin.
@@ -94,4 +150,9 @@ yarn ts-node scripts/demo-pause.ts   # ... withdraw blocked: ScopePaused ... wit
 
 - 2026-11-27 (Phase 0): program IDs changed from the starter IDs to `breakglass` = `AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB`, `test_vault` = `2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn`. Read the ID from the IDL's `address` field rather than hard-coding it.
 - 2026-11-27 (Phase 1): `PauseState` grows from 16 to 64 entries (`MAX_ACTIVE_PAUSES`), and a scope can now have several entries. Account size is 2925 bytes (was 765). Nothing is deployed yet, so there is no migration. Frontends must use `isScopePaused` / `pausedMask` rather than assuming one entry per scope.
+- 2026-11-27 (Phase 2): `initialize_config` takes two more accounts (`upgradeAuthority` signer, `protectedProgramData`).
+- 2026-11-27 (Phase 2): `FlowLimiter` gains `vault`, `large_threshold_bps` and `auto_trip_secs`. `PendingWithdrawal` gains `scope` and `kind` (appended, so the `owner` memcmp offset is unchanged). Nothing is deployed, so there is no migration.
+- 2026-11-27 (Phase 2): `check_outflow`'s args are `(scope, amount, owner, hold_nonce)`, not the spec's `(scope, mint, amount, owner)`. A paused scope fails with `ScopePaused` instead of returning Deny.
+- 2026-11-27 (Phase 2): test-vault `withdraw` takes `(amount, hold_nonce)` and the Breakglass accounts `bgFlowLimiter`, `bgHold`, `bgEventAuthority`, `gateSigner` (plus `systemProgram`). `bgPauseState` is now writable.
+- 2026-11-27 (Phase 2): new event `LimitHoldQueued` (hold created by a cap breach). Phase 5 must decode it.
 - 2026-11-27 (Phase 1): documented that Anchor's TS coder reports event names in camelCase (`paused`). The Rust struct names in FRONTEND.md section 6 are unchanged. The Phase 5 monitor API must pick one form for `Event.kind` and document it.

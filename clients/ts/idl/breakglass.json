@@ -8,6 +8,181 @@
   },
   "instructions": [
     {
+      "name": "check_outflow",
+      "docs": [
+        "The outflow gate. CPI from the protected program's gate PDA. Returns",
+        "Allow or Hold; a paused scope fails with ScopePaused. Phase 2."
+      ],
+      "discriminator": [
+        15,
+        255,
+        137,
+        136,
+        164,
+        56,
+        232,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "gate_signer",
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "ProtocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "pause_state",
+            "flow_limiter"
+          ]
+        },
+        {
+          "name": "pause_state",
+          "docs": [
+            "Writable for the auto-trip on a cap breach."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  117,
+                  115,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "flow_limiter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  108,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "flow_limiter.mint",
+                "account": "FlowLimiter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "relations": [
+            "flow_limiter"
+          ]
+        },
+        {
+          "name": "hold",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "scope",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "owner",
+          "type": "pubkey"
+        },
+        {
+          "name": "hold_nonce",
+          "type": "u64"
+        }
+      ],
+      "returns": {
+        "defined": {
+          "name": "Decision"
+        }
+      }
+    },
+    {
       "name": "check_scope",
       "docs": [
         "Read-only gate for non-outflow instructions: fails if `scope` is paused. Phase 0/1."
@@ -79,6 +254,395 @@
       ]
     },
     {
+      "name": "claim_held",
+      "docs": [
+        "Claim a held withdrawal after `release_at`. CPI from the protected",
+        "program, signed by the owner. Returns Allow or Hold. Phase 2."
+      ],
+      "discriminator": [
+        233,
+        137,
+        232,
+        163,
+        130,
+        51,
+        68,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "gate_signer",
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "hold"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "ProtocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "pause_state",
+            "flow_limiter",
+            "hold"
+          ]
+        },
+        {
+          "name": "pause_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  117,
+                  115,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "flow_limiter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  108,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "flow_limiter.mint",
+                "account": "FlowLimiter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "relations": [
+            "flow_limiter"
+          ]
+        },
+        {
+          "name": "hold",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  111,
+                  108,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "hold.nonce",
+                "account": "PendingWithdrawal"
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [],
+      "returns": {
+        "defined": {
+          "name": "Decision"
+        }
+      }
+    },
+    {
+      "name": "freeze_held",
+      "docs": [
+        "Guardian (or admin) freezes a queued hold. Phase 2."
+      ],
+      "discriminator": [
+        187,
+        101,
+        233,
+        227,
+        137,
+        207,
+        85,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "ProtocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "hold"
+          ]
+        },
+        {
+          "name": "hold",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  111,
+                  108,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "hold.owner",
+                "account": "PendingWithdrawal"
+              },
+              {
+                "kind": "account",
+                "path": "hold.nonce",
+                "account": "PendingWithdrawal"
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "init_flow_limiter",
+      "docs": [
+        "Admin creates the outflow limiter for one mint. Phase 2."
+      ],
+      "discriminator": [
+        204,
+        255,
+        16,
+        28,
+        146,
+        94,
+        79,
+        171
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "ProtocolConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "The protocol's vault token account for `mint`."
+          ]
+        },
+        {
+          "name": "flow_limiter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  108,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "InitFlowLimiterArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "initialize_config",
       "docs": [
         "Register a protected program with Breakglass. Phase 0."
@@ -107,7 +671,67 @@
           "signer": true
         },
         {
+          "name": "upgrade_authority",
+          "docs": [
+            "The protected program's upgrade authority. Only it can register the",
+            "program, so nobody can squat a protocol's config PDA and become its admin."
+          ],
+          "signer": true
+        },
+        {
           "name": "protected_program"
+        },
+        {
+          "name": "protected_program_data",
+          "docs": [
+            "The protected program's ProgramData (BPF upgradeable loader). Immutable",
+            "or non-upgradeable programs can't be registered (fail closed)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protected_program"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                2,
+                168,
+                246,
+                145,
+                78,
+                136,
+                161,
+                176,
+                226,
+                16,
+                21,
+                62,
+                247,
+                99,
+                174,
+                43,
+                0,
+                194,
+                185,
+                61,
+                22,
+                193,
+                36,
+                210,
+                192,
+                83,
+                122,
+                16,
+                4,
+                128,
+                0,
+                0
+              ]
+            }
+          }
         },
         {
           "name": "config",
@@ -351,6 +975,125 @@
           "type": "u16"
         }
       ]
+    },
+    {
+      "name": "reject_held",
+      "docs": [
+        "Admin rejects a hold, through the protected program. Phase 2."
+      ],
+      "discriminator": [
+        164,
+        157,
+        160,
+        206,
+        47,
+        154,
+        132,
+        28
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "gate_signer",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.protected_program",
+                "account": "ProtocolConfig"
+              }
+            ]
+          },
+          "relations": [
+            "hold"
+          ]
+        },
+        {
+          "name": "hold",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  111,
+                  108,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "hold.owner",
+                "account": "PendingWithdrawal"
+              },
+              {
+                "kind": "account",
+                "path": "hold.nonce",
+                "account": "PendingWithdrawal"
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
     },
     {
       "name": "remove_guardian",
@@ -692,6 +1435,19 @@
   ],
   "accounts": [
     {
+      "name": "FlowLimiter",
+      "discriminator": [
+        161,
+        229,
+        183,
+        240,
+        64,
+        74,
+        254,
+        168
+      ]
+    },
+    {
       "name": "GuardianLedger",
       "discriminator": [
         85,
@@ -715,6 +1471,19 @@
         203,
         197,
         145
+      ]
+    },
+    {
+      "name": "PendingWithdrawal",
+      "discriminator": [
+        61,
+        103,
+        179,
+        177,
+        148,
+        199,
+        63,
+        171
       ]
     },
     {
@@ -834,6 +1603,19 @@
         190,
         125,
         92
+      ]
+    },
+    {
+      "name": "LimitHoldQueued",
+      "discriminator": [
+        53,
+        54,
+        6,
+        136,
+        86,
+        28,
+        141,
+        239
       ]
     },
     {
@@ -1030,6 +1812,21 @@
       "code": 6022,
       "name": "GuardianNotFound",
       "msg": "Key is not a guardian of this config"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidLimiterConfig",
+      "msg": "Flow limiter parameters out of range"
+    },
+    {
+      "code": 6024,
+      "name": "WrongVault",
+      "msg": "Vault token account does not match the flow limiter"
+    },
+    {
+      "code": 6025,
+      "name": "WrongHold",
+      "msg": "Hold account does not match its seeds, owner, mint or limiter"
     }
   ],
   "types": [
@@ -1120,6 +1917,132 @@
       }
     },
     {
+      "name": "Decision",
+      "docs": [
+        "What `check_outflow` / `claim_held` return (Anchor return data).",
+        "Deny never comes back as a value: Breakglass fails with `ScopePaused`",
+        "instead, so the error is attributed to Breakglass. The variant stays for SDK",
+        "callers that want an exhaustive match."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Allow"
+          },
+          {
+            "name": "Hold"
+          },
+          {
+            "name": "Deny"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FlowLimiter",
+      "docs": [
+        "PDA [\"flow\", config, mint]. One per mint, so write locks stay per asset.",
+        "Window math lives in `limiter.rs`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "config",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "docs": [
+              "The protocol's vault token account for `mint`. Its balance sizes the bps cap."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "scope",
+            "docs": [
+              "The outflow scope this limiter gates (and auto-trips on a cap breach)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "window_secs",
+            "type": "i64"
+          },
+          {
+            "name": "cap_absolute",
+            "type": "u64"
+          },
+          {
+            "name": "cap_bps_of_vault",
+            "docs": [
+              "0 = no balance-based cap."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "buckets",
+            "docs": [
+              "Ring of outflow sums; bucket width = ceil(window_secs / 11), so the 12",
+              "buckets always cover at least `window_secs` (never under-counts)."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                12
+              ]
+            }
+          },
+          {
+            "name": "bucket_start",
+            "docs": [
+              "Start time of the newest bucket."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "large_threshold",
+            "type": "u64"
+          },
+          {
+            "name": "large_threshold_bps",
+            "docs": [
+              "0 = threshold is `large_threshold` only; else min(large_threshold, bps x balance)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "hold_secs",
+            "type": "i64"
+          },
+          {
+            "name": "auto_trip_secs",
+            "type": "i64"
+          },
+          {
+            "name": "instant_allowance",
+            "docs": [
+              "Zero-loss mode (Phase 3): amount per call that may skip screening (0 = screen everything)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "screen_secs",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "GuardianLedger",
       "docs": [
         "PDA [\"gledger\", config, guardian]. Created on the signer's first `pause` or `renew_pause`."
@@ -1191,6 +2114,26 @@
       }
     },
     {
+      "name": "HoldKind",
+      "docs": [
+        "Why a withdrawal was held."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Large"
+          },
+          {
+            "name": "Limit"
+          },
+          {
+            "name": "Screen"
+          }
+        ]
+      }
+    },
+    {
       "name": "HoldResolved",
       "type": {
         "kind": "struct",
@@ -1209,6 +2152,29 @@
               "0 = claimed, 1 = released, 2 = rejected"
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HoldStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Queued"
+          },
+          {
+            "name": "Frozen"
+          },
+          {
+            "name": "Released"
+          },
+          {
+            "name": "Rejected"
+          },
+          {
+            "name": "Claimed"
           }
         ]
       }
@@ -1241,7 +2207,134 @@
       }
     },
     {
+      "name": "InitFlowLimiterArgs",
+      "docs": [
+        "Limiter parameters. `None` takes the spec default where one exists."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "scope",
+            "docs": [
+              "The outflow scope this limiter gates (the scope `check_outflow` must be called with)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "window_secs",
+            "docs": [
+              "None = DEFAULT_WINDOW_SECS. Must be >= 12."
+            ],
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "cap_absolute",
+            "docs": [
+              "Required, > 0."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "cap_bps_of_vault",
+            "docs": [
+              "0 = no balance-based cap. Max 10_000."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "large_threshold",
+            "docs": [
+              "Required. Withdrawals >= this are held for `hold_secs`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "large_threshold_bps",
+            "docs": [
+              "0 = absolute threshold only. Max 10_000."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "hold_secs",
+            "docs": [
+              "None = DEFAULT_HOLD_SECS."
+            ],
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "auto_trip_secs",
+            "docs": [
+              "None = config.policy.auto_trip_secs."
+            ],
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "instant_allowance",
+            "docs": [
+              "None = DEFAULT_INSTANT_ALLOWANCE (no screening). Used from Phase 3."
+            ],
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "screen_secs",
+            "docs": [
+              "None = DEFAULT_SCREEN_SECS. Used from Phase 3."
+            ],
+            "type": {
+              "option": "i64"
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "LargeWithdrawalQueued",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "config",
+            "type": "pubkey"
+          },
+          {
+            "name": "hold",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "release_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LimitHoldQueued",
+      "docs": [
+        "A withdrawal that would have crossed the window cap was held (and the scope",
+        "auto-tripped; `LimitTripped` and `Paused` are emitted with it)."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1470,6 +2563,69 @@
           {
             "name": "reason",
             "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PendingWithdrawal",
+      "docs": [
+        "PDA [\"hold\", config, owner, nonce]. Created by `check_outflow` on Hold."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "config",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "release_at",
+            "type": "i64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "HoldStatus"
+              }
+            }
+          },
+          {
+            "name": "scope",
+            "type": "u8"
+          },
+          {
+            "name": "kind",
+            "type": {
+              "defined": {
+                "name": "HoldKind"
+              }
+            }
           }
         ]
       }

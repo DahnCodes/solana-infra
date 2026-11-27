@@ -1,8 +1,12 @@
+import { Keypair } from "@solana/web3.js";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { expect } from "chai";
 import {
   breakglass,
   configPda,
   ensureConfig,
+  expectError,
+  fund,
   guardians,
   initConfig,
   onlyEvent,
@@ -12,6 +16,22 @@ import {
 } from "./helpers";
 
 describe("breakglass", () => {
+  it("only the protected program's upgrade authority can register it", async () => {
+    const squatter = Keypair.generate();
+    await fund(squatter.publicKey);
+    await expectError(
+      initConfig(testVault.programId, squatter),
+      "Unauthorized",
+    );
+  });
+
+  it("a program without an upgrade authority (non-upgradeable) can't be registered", async () => {
+    // The SPL Token program is owned by the non-upgradeable BPF loader: no ProgramData.
+    await expectError(initConfig(TOKEN_PROGRAM_ID), "AccountNotInitialized", {
+      framework: true,
+    });
+  });
+
   it("initializes a protocol config", async () => {
     const sig = await initConfig();
 
@@ -37,5 +57,5 @@ describe("breakglass", () => {
   });
 
   // tests/pause.ts: pause / renew / unpause / cooldown / budget / unauthorized.
-  // Phase 2 adds: outflow gate tests (tests/outflow.ts).
+  // tests/outflow.ts: outflow gate, holds, limiter, fail-closed account checks.
 });

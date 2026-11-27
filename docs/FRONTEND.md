@@ -10,7 +10,7 @@ Everything a frontend needs to read Breakglass state, send Breakglass transactio
 | --- | --- |
 | IDL (JSON) | `clients/ts/idl/breakglass.json` (generated, committed) |
 | TS type for `Program<Breakglass>` | `clients/ts/idl/breakglass.ts` (generated, committed) |
-| PDAs, seeds, scope masks, error codes, event decoding, pause-state helpers | `clients/ts/src` (`@breakglass/client`) |
+| PDAs, seeds, scope masks, error codes, event decoding, pause-state and limiter helpers | `clients/ts/src` (`@breakglass/client`) |
 | Off-chain incidents, alerts, holds | Monitor HTTP API, section 7 |
 
 ```ts
@@ -49,9 +49,11 @@ All accounts are owned by the Breakglass program. Seeds are UTF-8 strings. `u64`
 | `ProtocolConfig` | `"config", protected_program` | `findConfigPda` | ✅ |
 | `PauseState` | `"pause", config` | `findPauseStatePda` | ✅ |
 | `GuardianLedger` | `"gledger", config, guardian` | `findGuardianLedgerPda` | ✅ |
-| `FlowLimiter` | `"flow", config, mint` | `findFlowLimiterPda` | 🔜 P2 |
-| `PendingWithdrawal` | `"hold", config, owner, nonce(u64)` | `findPendingWithdrawalPda` | 🔜 P2 |
+| `FlowLimiter` | `"flow", config, mint` | `findFlowLimiterPda` | ✅ |
+| `PendingWithdrawal` | `"hold", config, owner, nonce(u64)` | `findPendingWithdrawalPda` | ✅ |
 | `PendingConfig` | `"cfgchg", config, id(u64)` | `findPendingConfigPda` | 🔜 P4 |
+
+Two PDAs that aren't Breakglass accounts also appear in transactions: the protected program's **gate signer** `["breakglass-gate"]` under the *protected* program (`findGateSignerPda`), and Breakglass's **event authority** `["__event_authority"]` (`findEventAuthorityPda`). `outflowAccounts()` derives all of them for one withdraw.
 
 Field names below are as they appear in TypeScript (Anchor camelCases them). `i64`/`u64` arrive as `BN`. Times are unix seconds. Rust enums arrive as one-key objects, for example `{ guardian: {} }`.
 
@@ -70,9 +72,12 @@ There is one entry per (scope, kind, `pausedBy`), so **one scope can have severa
 - **Budget:** remaining = `policy.budgetSecsPerPeriod - pauseSecsUsed`. When `now >= periodStart + policy.budgetPeriodSecs`, the next pause starts a fresh period (so show the full budget then).
 - **Cooldown:** the guardian can't start a new pause until `lastPauseEnd + policy.cooldownSecs`. `lastPauseEnd` is the *scheduled* end of its latest pause. Lifting a pause early doesn't move it, and it is in the future while one of its pauses runs.
 
-**`FlowLimiter`** (🔜 P2): `mint`, `scope`, `windowSecs`, `capAbsolute: u64`, `capBpsOfVault: u16`, `buckets: u64[12]`, `bucketStart`, `largeThreshold`, `holdSecs`, `instantAllowance` (0 means screen every withdrawal), `screenSecs`. Window usage is the sum of `buckets`. The effective cap is `min(capAbsolute, capBpsOfVault × vault balance / 10000)`.
+**`FlowLimiter`**: `bump`, `config`, `mint`, `vault` (the protocol's vault token account for `mint`), `scope` (the outflow scope it gates and auto-trips), `windowSecs`, `capAbsolute: u64`, `capBpsOfVault: u16` (0 = no balance-based cap), `buckets: u64[12]`, `bucketStart`, `largeThreshold: u64`, `largeThresholdBps: u16` (0 = absolute threshold only), `holdSecs`, `autoTripSecs`, `instantAllowance: u64` (0 = screen every withdrawal; u64 max = never screen), `screenSecs`.
+- **Window usage**: use `windowUsage(limiter, now)` from `clients/ts/src/limiter.ts`. Each bucket is `ceil(windowSecs / 11)` seconds wide (so the window never under-counts) and `bucketStart` is the start of the newest. The raw sum of `buckets` can include expired buckets until the next write; the helper skips them like the program does. `effectiveCap(limiter, vaultBalance)` and `effectiveThreshold(...)` are there too.
+- **Effective cap** = `min(capAbsolute, capBpsOfVault × vaultBalance / 10000)` (just `capAbsolute` when bps is 0). It shrinks as the vault drains.
+- **Effective threshold** = `min(largeThreshold, largeThresholdBps × vaultBalance / 10000)` (just `largeThreshold` when bps is 0).
 
-**`PendingWithdrawal`** (🔜 P2): `owner`, `mint`, `amount`, `nonce`, `createdAt`, `releaseAt`, `status: { queued } | { frozen } | { released } | { rejected } | { claimed }`. Claimable when `status` is `queued` and `now >= releaseAt`, or when `status` is `released`.
+**`PendingWithdrawal`**: `bump`, `config`, `owner`, `mint`, `amount`, `nonce`, `createdAt`, `releaseAt`, `status: { queued } | { frozen } | { released } | { rejected } | { claimed }`, `scope`, `kind: { large } | { limit } | { screen }` (why it was held: size, a cap breach, or zero-loss screening). Claimable when the scope isn't paused and either `status` is `queued` with `now >= releaseAt`, or `status` is `released` (Phase 4). Accounts stay after they resolve, so history remains readable.
 
 **`PendingConfig`** (🔜 P4): `id`, `actionKind: u8`, `actionData: bytes`, `proposedAt`, `executableAt`, `vetoed`, `executed`. Phase 4 replaces `actionKind`/`actionData` with a typed enum (`RaiseLimits`, `AddGuardian`, `SetAdmin`, `ReleaseHeld`, `ChangePolicy`) and documents it here.
 
@@ -88,17 +93,17 @@ Who signs: **admin** (usually through a Squads multisig, so the frontend builds 
 
 | Instruction | Args | Signer | Accounts | Status |
 | --- | --- | --- | --- | --- |
-| `initialize_config` | `{ guardians: Pubkey[], unpausableMask: u64, timelockSecs: i64 \| null }` | payer + admin | `payer, admin, protectedProgram` (config, pauseState and the event accounts are resolved by Anchor) | ✅ |
+| `initialize_config` | `{ guardians: Pubkey[], unpausableMask: u64, timelockSecs: i64 \| null }` | payer + admin + the protected program's **upgrade authority** | `payer, admin, upgradeAuthority, protectedProgram, protectedProgramData` (ProgramData = PDA `[protectedProgram]` of `BPFLoaderUpgradeab1e11111111111111111111111`). Fails with `Unauthorized` if `upgradeAuthority` isn't the program's upgrade authority, so a program with no upgrade authority can't be registered. | ✅ |
 | `check_scope` | `scope: u8` | CPI | `config, pauseState` | ✅ |
 | `pause` | `scopes: u64` (mask), `duration: i64` (seconds), `reason: u16` (free-form code) | guardian or admin (`authority`, also pays for its ledger on first use) | `authority, config, pauseState, guardianLedger` (ledger = `findGuardianLedgerPda(config, authority)`; `pauseAccounts()` builds all four) | ✅ |
 | `renew_pause` | `scopes: u64` | guardian or admin (`authority`) | same as `pause` | ✅ |
 | `unpause` | `scopes: u64` | admin, or a guardian for its own pause (`authority`) | `authority, config, pauseState` | ✅ |
 | `remove_guardian` | `guardian: Pubkey` | admin (applies immediately) | `admin, config` | ✅ |
-| `init_flow_limiter` | limiter params | admin | config, flowLimiter, mint | 🔜 P2 |
-| `check_outflow` | `scope, mint, amount, owner` | CPI (protected program's `"breakglass-gate"` PDA) | | 🔜 P2 |
-| `claim_held` | hold | user (owner) | through the protected program | 🔜 P2 |
-| `freeze_held` | hold | guardian | config, hold | 🔜 P2 |
-| `reject_held` | hold | admin (immediate) | config, hold | 🔜 P2 |
+| `init_flow_limiter` | `{ scope: u8, windowSecs: i64 \| null, capAbsolute: u64, capBpsOfVault: u16, largeThreshold: u64, largeThresholdBps: u16, holdSecs: i64 \| null, autoTripSecs: i64 \| null, instantAllowance: u64 \| null, screenSecs: i64 \| null }` (null = default: 1h window, 6h hold, policy auto-trip 1h, no screening, 120s screen) | admin (pays rent) | `admin, config, mint, vault, flowLimiter`. One per mint, can't be re-initialized. `InvalidLimiterConfig` if window < 12s, cap 0, a bps value > 10000, or a duration ≤ 0. `ScopeUnpausable` for an unpausable scope. | ✅ |
+| `check_outflow` | `scope: u8, amount: u64, owner: Pubkey, holdNonce: u64` | CPI only: the protected program's gate signer, plus a `payer` | `gateSigner, payer, config, pauseState, flowLimiter, vault, hold, systemProgram` + event accounts. Returns `Allow` or `Hold` (return data). A paused scope fails with `ScopePaused`, which is the Deny. Calling it directly fails with `InvalidCaller`. | ✅ |
+| `claim_held` | none | CPI only (gate signer) + the hold's `owner` | `gateSigner, owner, config, pauseState, flowLimiter, vault, hold` + event accounts. Returns `Allow` (protocol pays out) or `Hold` (claim would cross the cap: scope auto-tripped, hold stays `queued`). Errors: `HoldNotReleased`, `HoldFrozen`, `HoldInvalidState`, `ScopePaused`. | ✅ |
+| `freeze_held` | none | guardian or admin (`authority`) | `authority, config, hold`. Only `queued` holds (`HoldInvalidState` otherwise). Frozen holds can never be claimed. | ✅ |
+| `reject_held` | none | admin + CPI (gate signer), i.e. through the protected program | `admin, gateSigner, config, hold` + event accounts. `queued`, `frozen` or `released` → `rejected`. The protocol returns the amount to the user's position in the same transaction. | ✅ |
 | `propose_config` | action | admin | config, pendingConfig | 🔜 P4 |
 | `execute_config` | | anyone, after `executableAt` | config, pendingConfig | 🔜 P4 |
 | `veto_config` | | guardian | config, pendingConfig | 🔜 P4 |
@@ -112,8 +117,20 @@ Examples (✅ today):
 ```ts
 await program.methods
   .initializeConfig({ guardians: [guardian], unpausableMask: new BN(1 << 3), timelockSecs: null })
-  .accounts({ payer: wallet.publicKey, admin: wallet.publicKey, protectedProgram: PROTECTED_PROGRAM_ID })
+  .accountsPartial({
+    payer: wallet.publicKey,
+    admin: wallet.publicKey,
+    upgradeAuthority: wallet.publicKey, // must be PROTECTED_PROGRAM_ID's upgrade authority
+    protectedProgram: PROTECTED_PROGRAM_ID,
+    protectedProgramData: PublicKey.findProgramAddressSync(
+      [PROTECTED_PROGRAM_ID.toBuffer()],
+      new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111"),
+    )[0],
+  })
   .rpc();
+
+// Guardian freezes a held withdrawal.
+await program.methods.freezeHeld().accountsPartial({ authority: guardian.publicKey, config, hold }).signers([guardian]).rpc();
 
 // Guardian pauses WITHDRAW (scope 1) for 2 hours with reason code 42.
 const accts = pauseAccounts(program.programId, PROTECTED_PROGRAM_ID, guardian.publicKey);
@@ -141,7 +158,16 @@ What the program enforces, so a UI can disable buttons and explain errors before
 | Not paused | Scopes in the mask that aren't paused are skipped. If nothing was lifted: `ScopeNotPaused`. | Same. |
 | Re-pausing | Can't (cooldown). | Pausing an already admin-paused scope never shortens it (`pausedUntil` = the later of the two). |
 
-**User withdrawals go through the protected protocol, not Breakglass.** The user calls the protocol's `withdraw`. The protocol CPIs `check_outflow` and gets `Allow | Hold | Deny`. On Hold, a `PendingWithdrawal` is created and a `LargeWithdrawalQueued` or `WithdrawalScreenQueued` event says when it unlocks. The UI should show "held until `releaseAt`" and let the user claim it later through the protocol's claim instruction.
+**User withdrawals go through the protected protocol, not Breakglass.** The user calls the protocol's `withdraw`. The protocol CPIs `check_outflow`:
+- **Allow:** the funds arrive in the same transaction (`OutflowRecorded`).
+- **Hold:** no funds move. A `PendingWithdrawal` is created at `["hold", config, user, holdNonce]` (rent paid by the user) and an event says why and until when: `LargeWithdrawalQueued` (size), `LimitHoldQueued` (cap breach, with `LimitTripped` + `Paused`) or `WithdrawalScreenQueued` (screening). The transaction **succeeds**, so read the events or the hold account to tell Hold from Allow. Show "held until `releaseAt`", then let the user claim through the protocol's claim instruction.
+- **Paused (Deny):** the transaction fails with Breakglass `ScopePaused` (6000).
+
+**Picking `holdNonce`:** the hold account must be in the transaction before the decision is known, so the client picks the nonce (any unused u64; `outflowAccounts()` uses a random one) and passes both the nonce and the hold PDA. An already-used nonce makes a held withdrawal fail.
+
+**test-vault's instructions** (the reference integration, `clients/ts/idl` has no test-vault types; read `target/idl/test_vault.json`): `withdraw(amount, holdNonce)`, `claimHeld()`, `rejectHeld()` (admin). Breakglass accounts use a `bg` prefix (`bgConfig, bgPauseState, bgFlowLimiter, bgHold, bgEventAuthority`) plus `gateSigner`.
+
+**Every claim counts against the window.** If a claim would cross the cap, it auto-trips the scope and pays nothing (the hold stays `queued`); try again after the window frees up and the admin reopens the scope.
 
 ## 6. Events
 
@@ -164,12 +190,13 @@ For a dashboard, prefer the monitor API (section 7). It dedupes across several R
 | `PauseRenewed` | config, scopesMask, pausedUntil, by, renewals | Pause extended. `pausedUntil` and `renewals` are the max across the scopes. `by` is the admin when the admin extended past the cap. | ✅ |
 | `Unpaused` | config, scopesMask, by | Pause lifted early. `scopesMask` holds only the scopes actually lifted, and each of them is now open. Expiry emits nothing. | ✅ |
 | `GuardianRemoved` | config, guardian | Guardian removed by the admin. Its running pauses stay until they expire or the admin lifts them. | ✅ |
-| `OutflowRecorded` | config, mint, owner, amount, windowTotal, windowCap | Withdrawal allowed | 🔜 P2 |
-| `LargeWithdrawalQueued` | config, hold, mint, owner, amount, releaseAt | Held for size | 🔜 P2 |
-| `WithdrawalScreenQueued` | config, hold, mint, owner, amount, releaseAt | Held for screening (zero-loss mode) | 🔜 P3 |
-| `LimitTripped` | config, mint, scope, windowTotal, windowCap, pausedUntil | Cap breached, scope auto-paused | 🔜 P2 |
-| `HoldFrozen` | config, hold, by | Guardian froze a hold | 🔜 P2 |
-| `HoldResolved` | config, hold, outcome (0 claimed, 1 released, 2 rejected) | | 🔜 P2 |
+| `OutflowRecorded` | config, mint, owner, amount, windowTotal, windowCap | Funds left the vault: an allowed withdrawal or a claimed hold. `windowTotal` includes `amount`. | ✅ |
+| `LargeWithdrawalQueued` | config, hold, mint, owner, amount, releaseAt | Held for size (`kind: large`) | ✅ |
+| `LimitHoldQueued` | config, hold, mint, owner, amount, releaseAt | Held because it would cross the cap (`kind: limit`). Emitted after `LimitTripped` and `Paused`. | ✅ |
+| `WithdrawalScreenQueued` | config, hold, mint, owner, amount, releaseAt | Held for screening (`kind: screen`, zero-loss mode: amount over `instantAllowance`) | ✅ |
+| `LimitTripped` | config, mint, scope, windowTotal, windowCap, pausedUntil | Cap breached, scope auto-paused until `pausedUntil` (admin-only unpause). `windowTotal` excludes the held amount. Always followed by `Paused` with `kind` 1, `by` = the limiter, `reason` 1. | ✅ |
+| `HoldFrozen` | config, hold, by | A guardian (or the admin) froze a hold | ✅ |
+| `HoldResolved` | config, hold, outcome (0 claimed, 1 released, 2 rejected) | 0 and 2 are live; 1 arrives with the Phase 4 timelocked release. A claim emits it before its `OutflowRecorded`. | ✅ |
 | `ConfigChangeProposed` | config, change, actionKind, executableAt | Timelocked change queued | 🔜 P4 |
 | `ConfigChangeExecuted` | config, change | | 🔜 P4 |
 | `ConfigChangeVetoed` | config, change, by | | 🔜 P4 |
@@ -240,6 +267,9 @@ Anchor numbers custom errors from 6000 in declaration order. `errors.rs` is appe
 | 6020 | `ScopeNotPaused` | Nothing to renew or lift: that scope isn't paused. |
 | 6021 | `InvalidDuration` | Pause duration must be more than zero. |
 | 6022 | `GuardianNotFound` | That key isn't a guardian. |
+| 6023 | `InvalidLimiterConfig` | Limiter settings out of range. |
+| 6024 | `WrongVault` | Wrong vault account for this limiter. |
+| 6025 | `WrongHold` | Wrong held-withdrawal account (seeds, owner, mint or limiter). |
 
 A protected protocol has its own errors that also start at 6000, so check which program failed before mapping a code.
 

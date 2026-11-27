@@ -1,6 +1,6 @@
 //! Account layouts. See docs/SPEC.md "Accounts (PDAs)".
-//! ProtocolConfig, PauseState and GuardianLedger are live (Phase 1). The rest
-//! are defined now so the layout is reviewed early, and wired up in later phases.
+//! ProtocolConfig, PauseState, GuardianLedger (Phase 1), FlowLimiter and
+//! PendingWithdrawal (Phase 2) are live. PendingConfig is wired up in Phase 4.
 
 use anchor_lang::prelude::*;
 
@@ -100,22 +100,33 @@ impl PauseState {
     }
 }
 
-/// PDA ["flow", config, mint]. Wired up in Phase 2.
+/// PDA ["flow", config, mint]. One per mint, so write locks stay per asset.
+/// Window math lives in `limiter.rs`.
 #[account]
 #[derive(InitSpace)]
 pub struct FlowLimiter {
     pub bump: u8,
     pub config: Pubkey,
     pub mint: Pubkey,
+    /// The protocol's vault token account for `mint`. Its balance sizes the bps cap.
+    pub vault: Pubkey,
+    /// The outflow scope this limiter gates (and auto-trips on a cap breach).
     pub scope: u8,
     pub window_secs: i64,
     pub cap_absolute: u64,
+    /// 0 = no balance-based cap.
     pub cap_bps_of_vault: u16,
+    /// Ring of outflow sums; bucket width = ceil(window_secs / 11), so the 12
+    /// buckets always cover at least `window_secs` (never under-counts).
     pub buckets: [u64; LIMITER_BUCKETS],
+    /// Start time of the newest bucket.
     pub bucket_start: i64,
     pub large_threshold: u64,
+    /// 0 = threshold is `large_threshold` only; else min(large_threshold, bps x balance).
+    pub large_threshold_bps: u16,
     pub hold_secs: i64,
-    /// Zero-loss mode: amount per call that may skip screening (0 = screen everything).
+    pub auto_trip_secs: i64,
+    /// Zero-loss mode (Phase 3): amount per call that may skip screening (0 = screen everything).
     pub instant_allowance: u64,
     pub screen_secs: i64,
 }
@@ -129,7 +140,18 @@ pub enum HoldStatus {
     Claimed,
 }
 
-/// PDA ["hold", config, owner, nonce]. Wired up in Phase 2.
+/// Why a withdrawal was held.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub enum HoldKind {
+    /// amount >= large-withdrawal threshold
+    Large,
+    /// would have crossed the window cap (the scope was auto-tripped)
+    Limit,
+    /// zero-loss screening (Phase 3)
+    Screen,
+}
+
+/// PDA ["hold", config, owner, nonce]. Created by `check_outflow` on Hold.
 #[account]
 #[derive(InitSpace)]
 pub struct PendingWithdrawal {
@@ -142,6 +164,19 @@ pub struct PendingWithdrawal {
     pub created_at: i64,
     pub release_at: i64,
     pub status: HoldStatus,
+    pub scope: u8,
+    pub kind: HoldKind,
+}
+
+/// What `check_outflow` / `claim_held` return (Anchor return data).
+/// Deny never comes back as a value: Breakglass fails with `ScopePaused`
+/// instead, so the error is attributed to Breakglass. The variant stays for SDK
+/// callers that want an exhaustive match.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    Hold,
+    Deny,
 }
 
 /// PDA ["gledger", config, guardian]. Created on the signer's first `pause` or `renew_pause`.

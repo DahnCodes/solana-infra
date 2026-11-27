@@ -49,4 +49,11 @@ pub enum BreakglassError {
     InvalidDuration,
     #[msg("Key is not a guardian of this config")]
     GuardianNotFound,
+    // Phase 2 (append only)
+    #[msg("Flow limiter parameters out of range")]
+    InvalidLimiterConfig,
+    #[msg("Vault token account does not match the flow limiter")]
+    WrongVault,
+    #[msg("Hold account does not match its seeds, owner, mint or limiter")]
+    WrongHold,
 }

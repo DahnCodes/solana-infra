@@ -9,11 +9,14 @@ use anchor_lang::prelude::*;
 pub mod constants;
 pub mod errors;
 pub mod events;
+pub mod gate;
 pub mod instructions;
+pub mod limiter;
 pub mod pause_logic;
 pub mod state;
 
 use instructions::*;
+use state::Decision;
 
 declare_id!("AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB");
 
@@ -53,7 +56,42 @@ pub mod breakglass {
         instructions::remove_guardian::handler(ctx, guardian)
     }
 
-    // Phase 2: init_flow_limiter, check_outflow, claim_held, freeze_held, reject_held
-    // Phase 4: propose_config, execute_config, veto_config, cancel_config, release_held
+    /// Admin creates the outflow limiter for one mint. Phase 2.
+    pub fn init_flow_limiter(
+        ctx: Context<InitFlowLimiter>,
+        args: InitFlowLimiterArgs,
+    ) -> Result<()> {
+        instructions::init_flow_limiter::handler(ctx, args)
+    }
+
+    /// The outflow gate. CPI from the protected program's gate PDA. Returns
+    /// Allow or Hold; a paused scope fails with ScopePaused. Phase 2.
+    pub fn check_outflow(
+        ctx: Context<CheckOutflow>,
+        scope: u8,
+        amount: u64,
+        owner: Pubkey,
+        hold_nonce: u64,
+    ) -> Result<Decision> {
+        instructions::check_outflow::handler(ctx, scope, amount, owner, hold_nonce)
+    }
+
+    /// Claim a held withdrawal after `release_at`. CPI from the protected
+    /// program, signed by the owner. Returns Allow or Hold. Phase 2.
+    pub fn claim_held(ctx: Context<ClaimHeld>) -> Result<Decision> {
+        instructions::claim_held::handler(ctx)
+    }
+
+    /// Guardian (or admin) freezes a queued hold. Phase 2.
+    pub fn freeze_held(ctx: Context<FreezeHeld>) -> Result<()> {
+        instructions::freeze_held::handler(ctx)
+    }
+
+    /// Admin rejects a hold, through the protected program. Phase 2.
+    pub fn reject_held(ctx: Context<RejectHeld>) -> Result<()> {
+        instructions::reject_held::handler(ctx)
+    }
+
+    // Phase 4: propose_config, execute_config, veto_config, cancel_config, release_held (timelocked)
     // See docs/BUILD_PLAN.md.
 }

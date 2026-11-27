@@ -26,6 +26,9 @@ export const BREAKGLASS_ERRORS = [
   { code: 6020, name: "ScopeNotPaused", msg: "Scope is not paused" },
   { code: 6021, name: "InvalidDuration", msg: "Pause duration must be positive" },
   { code: 6022, name: "GuardianNotFound", msg: "Key is not a guardian of this config" },
+  { code: 6023, name: "InvalidLimiterConfig", msg: "Flow limiter parameters out of range" },
+  { code: 6024, name: "WrongVault", msg: "Vault token account does not match the flow limiter" },
+  { code: 6025, name: "WrongHold", msg: "Hold account does not match its seeds, owner, mint or limiter" },
 ] as const;
 
 export type BreakglassErrorName = (typeof BREAKGLASS_ERRORS)[number]["name"];

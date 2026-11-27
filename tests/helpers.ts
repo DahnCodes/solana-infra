@@ -58,18 +58,35 @@ export async function fund(...keys: PublicKey[]) {
   }
 }
 
-export function initConfig() {
+export const BPF_LOADER_UPGRADEABLE = new PublicKey(
+  "BPFLoaderUpgradeab1e11111111111111111111111",
+);
+export function programDataPda(program: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [program.toBuffer()],
+    BPF_LOADER_UPGRADEABLE,
+  )[0];
+}
+
+/** Register `protectedProgram` (default test-vault); the wallet is its upgrade authority. */
+export function initConfig(
+  protectedProgram: PublicKey = testVault.programId,
+  upgradeAuthority: Keypair = admin,
+) {
   return breakglass.methods
     .initializeConfig({
       guardians: guardians.map((g) => g.publicKey),
       unpausableMask: UNPAUSABLE_MASK,
       timelockSecs: null,
     })
-    .accounts({
+    .accountsPartial({
       payer: provider.wallet.publicKey,
       admin: provider.wallet.publicKey,
-      protectedProgram: testVault.programId,
+      upgradeAuthority: upgradeAuthority.publicKey,
+      protectedProgram,
+      protectedProgramData: programDataPda(protectedProgram),
     })
+    .signers(upgradeAuthority === admin ? [] : [upgradeAuthority])
     .rpc({ commitment: "confirmed" });
 }
 
@@ -140,27 +157,145 @@ export function removeGuardian(signer: Keypair, guardian: PublicKey) {
 
 export interface VaultFixture {
   mint: PublicKey;
+  vault: PublicKey;
+  vaultToken: PublicKey;
+  limiter: PublicKey;
   user: Keypair;
   userToken: PublicKey;
 }
 
-/** A fresh mint + vault, and a funded user holding `minted` tokens. */
-export async function createVault(minted = 1_000_000): Promise<VaultFixture> {
+export const [eventAuthorityPda] = PublicKey.findProgramAddressSync(
+  [Buffer.from("__event_authority")],
+  breakglass.programId,
+);
+export const [gateSignerPda] = PublicKey.findProgramAddressSync(
+  [Buffer.from("breakglass-gate")],
+  testVault.programId,
+);
+
+export function limiterPda(mint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("flow"), configPda.toBuffer(), mint.toBuffer()],
+    breakglass.programId,
+  )[0];
+}
+
+export function holdPda(owner: PublicKey, nonce: BN): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("hold"),
+      configPda.toBuffer(),
+      owner.toBuffer(),
+      nonce.toArrayLike(Buffer, "le", 8),
+    ],
+    breakglass.programId,
+  )[0];
+}
+
+let nonceCounter = new BN(Date.now()).muln(1000);
+/** A hold nonce not used before in this run. */
+export function nextNonce(): BN {
+  nonceCounter = nonceCounter.addn(1);
+  return nonceCounter.clone();
+}
+
+export interface LimiterParams {
+  windowSecs: BN | null;
+  capAbsolute: BN;
+  capBpsOfVault: number;
+  largeThreshold: BN;
+  largeThresholdBps: number;
+  holdSecs: BN | null;
+  autoTripSecs: BN | null;
+  instantAllowance: BN | null;
+  screenSecs: BN | null;
+}
+
+/** Generous by default: nothing is held or tripped unless a test asks for it. */
+export function limiterParams(
+  over: Partial<LimiterParams> = {},
+): LimiterParams & { scope: number } {
+  return {
+    scope: SCOPE.WITHDRAW,
+    windowSecs: null,
+    capAbsolute: new BN("1000000000000"),
+    capBpsOfVault: 0,
+    largeThreshold: new BN("1000000000000"),
+    largeThresholdBps: 0,
+    holdSecs: null,
+    autoTripSecs: null,
+    instantAllowance: null,
+    screenSecs: null,
+    ...over,
+  };
+}
+
+export function initLimiter(
+  signer: Keypair,
+  mint: PublicKey,
+  vaultToken: PublicKey,
+  params: LimiterParams & { scope: number },
+) {
+  return breakglass.methods
+    .initFlowLimiter(params)
+    .accountsPartial({
+      admin: signer.publicKey,
+      config: configPda,
+      mint,
+      vault: vaultToken,
+      flowLimiter: limiterPda(mint),
+    })
+    .signers(signer === admin ? [] : [signer])
+    .rpc({ commitment: "confirmed" });
+}
+
+/**
+ * A fresh mint + vault with its flow limiter, and a funded user holding
+ * `minted` tokens. Pass `limiter: null` to skip creating the limiter.
+ */
+export async function createVault(
+  opts: { minted?: number; limiter?: Partial<LimiterParams> | null } = {},
+): Promise<VaultFixture> {
   const user = Keypair.generate();
   await fund(user.publicKey);
   const mint = await createMint(connection, admin, admin.publicKey, null, 6);
+  const [vault] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), mint.toBuffer()],
+    testVault.programId,
+  );
+  const [vaultToken] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault_token"), vault.toBuffer()],
+    testVault.programId,
+  );
   await testVault.methods
     .initializeVault()
     .accountsPartial({ payer: admin.publicKey, mint })
     .rpc({ commitment: "confirmed" });
+  if (opts.limiter !== null) {
+    await initLimiter(admin, mint, vaultToken, limiterParams(opts.limiter));
+  }
   const ata = await getOrCreateAssociatedTokenAccount(
     connection,
     admin,
     mint,
     user.publicKey,
   );
-  await mintTo(connection, admin, mint, ata.address, admin, minted);
-  return { mint, user, userToken: ata.address };
+  await mintTo(
+    connection,
+    admin,
+    mint,
+    ata.address,
+    admin,
+    opts.minted ?? 1_000_000,
+  );
+  return {
+    mint,
+    vault,
+    vaultToken,
+    limiter: limiterPda(mint),
+    user,
+    userToken: ata.address,
+  };
 }
 
 export function deposit(v: VaultFixture, amount: number) {
@@ -177,18 +312,93 @@ export function deposit(v: VaultFixture, amount: number) {
     .rpc({ commitment: "confirmed" });
 }
 
-export function withdraw(v: VaultFixture, amount: number) {
+/** test-vault withdraw accounts, all explicit so tests can swap any of them. */
+export function withdrawAccounts(v: VaultFixture, nonce: BN) {
+  return {
+    user: v.user.publicKey,
+    mint: v.mint,
+    vault: v.vault,
+    vaultToken: v.vaultToken,
+    userToken: v.userToken,
+    bgConfig: configPda,
+    bgPauseState: pausePda,
+    bgFlowLimiter: v.limiter,
+    bgHold: holdPda(v.user.publicKey, nonce),
+    bgEventAuthority: eventAuthorityPda,
+    gateSigner: gateSignerPda,
+  };
+}
+
+export function withdrawIx(v: VaultFixture, amount: number, nonce: BN) {
   return testVault.methods
-    .withdraw(new BN(amount))
+    .withdraw(new BN(amount), nonce)
+    .accountsPartial(withdrawAccounts(v, nonce))
+    .instruction();
+}
+
+export function withdraw(v: VaultFixture, amount: number, nonce = nextNonce()) {
+  return testVault.methods
+    .withdraw(new BN(amount), nonce)
+    .accountsPartial(withdrawAccounts(v, nonce))
+    .signers([v.user])
+    .rpc({ commitment: "confirmed" });
+}
+
+export function claimHeld(v: VaultFixture, hold: PublicKey) {
+  return testVault.methods
+    .claimHeld()
     .accountsPartial({
       user: v.user.publicKey,
       mint: v.mint,
+      vault: v.vault,
+      vaultToken: v.vaultToken,
       userToken: v.userToken,
       bgConfig: configPda,
       bgPauseState: pausePda,
+      bgFlowLimiter: v.limiter,
+      bgHold: hold,
+      bgEventAuthority: eventAuthorityPda,
+      gateSigner: gateSignerPda,
     })
     .signers([v.user])
     .rpc({ commitment: "confirmed" });
+}
+
+export function rejectHeld(signer: Keypair, v: VaultFixture, hold: PublicKey) {
+  return testVault.methods
+    .rejectHeld()
+    .accountsPartial({
+      admin: signer.publicKey,
+      vault: v.vault,
+      position: positionPda(v),
+      bgConfig: configPda,
+      bgHold: hold,
+      bgEventAuthority: eventAuthorityPda,
+      gateSigner: gateSignerPda,
+    })
+    .signers(signer === admin ? [] : [signer])
+    .rpc({ commitment: "confirmed" });
+}
+
+export function freezeHeld(signer: Keypair, hold: PublicKey) {
+  return breakglass.methods
+    .freezeHeld()
+    .accountsPartial({ authority: signer.publicKey, config: configPda, hold })
+    .signers(signer === admin ? [] : [signer])
+    .rpc({ commitment: "confirmed" });
+}
+
+export function positionPda(v: VaultFixture): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("position"), v.vault.toBuffer(), v.user.publicKey.toBuffer()],
+    testVault.programId,
+  )[0];
+}
+
+export async function positionOf(v: VaultFixture): Promise<number> {
+  return (
+    await testVault.account.position.fetch(positionPda(v))
+  ).amount.toNumber();
 }
 
 export async function tokenBalance(account: PublicKey): Promise<bigint> {
@@ -198,10 +408,16 @@ export async function tokenBalance(account: PublicKey): Promise<bigint> {
 // ---- assertions -----------------------------------------------------------
 
 /**
- * Expect a transaction to fail with Breakglass error `name`. Also checks the
- * numeric code against the client's error table (clients/ts/src/errors.ts).
+ * Expect a transaction to fail with error `name`. For Breakglass errors this
+ * also checks the numeric code against the client's error table
+ * (clients/ts/src/errors.ts); pass `framework: true` for Anchor's own errors
+ * (e.g. AccountOwnedByWrongProgram) or another program's.
  */
-export async function expectError(p: Promise<unknown>, name: string) {
+export async function expectError(
+  p: Promise<unknown>,
+  name: string,
+  opts: { framework?: boolean } = {},
+) {
   let err: any;
   try {
     await p;
@@ -213,6 +429,7 @@ export async function expectError(p: Promise<unknown>, name: string) {
   const text = [String(err.message), ...logs].join("\n");
   const got = err.error?.errorCode?.code ?? /Error Code: (\w+)/.exec(text)?.[1];
   expect(got, text).to.equal(name);
+  if (opts.framework) return;
   const num =
     err.error?.errorCode?.number ??
     Number(/Error Number: (\d+)/.exec(text)?.[1]);

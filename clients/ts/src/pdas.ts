@@ -36,7 +36,7 @@ export function findPauseStatePda(
   );
 }
 
-/** ["flow", config, mint] (Phase 2) */
+/** ["flow", config, mint]: the outflow limiter of one mint. */
 export function findFlowLimiterPda(
   breakglassProgramId: PublicKey,
   config: PublicKey,
@@ -48,7 +48,7 @@ export function findFlowLimiterPda(
   );
 }
 
-/** ["hold", config, owner, nonce_u64_le] (Phase 2) */
+/** ["hold", config, owner, nonce_u64_le]: a held withdrawal. The protocol picks the nonce. */
 export function findPendingWithdrawalPda(
   breakglassProgramId: PublicKey,
   config: PublicKey,
@@ -73,6 +73,19 @@ export function findGuardianLedgerPda(
   );
 }
 
+/**
+ * ["breakglass-gate"] under the *protected* program: the PDA that program
+ * signs `check_outflow` / `claim_held` / `reject_held` with.
+ */
+export function findGateSignerPda(protectedProgram: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([enc(SEEDS.gateSigner)], protectedProgram);
+}
+
+/** Anchor's ["__event_authority"] PDA of Breakglass (needed by every CPI that emits events). */
+export function findEventAuthorityPda(breakglassProgramId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([enc("__event_authority")], breakglassProgramId);
+}
+
 /** ["cfgchg", config, id_u64_le] (Phase 4) */
 export function findPendingConfigPda(
   breakglassProgramId: PublicKey,
@@ -93,6 +106,34 @@ export function protocolAddresses(
   const [config] = findConfigPda(breakglassProgramId, protectedProgram);
   const [pauseState] = findPauseStatePda(breakglassProgramId, config);
   return { config, pauseState };
+}
+
+/**
+ * The Breakglass accounts a protected program's withdraw needs for one mint,
+ * plus a fresh hold PDA for `owner` (random nonce unless given). Pass them to
+ * the protocol's instruction under its own account names.
+ */
+export function outflowAccounts(
+  breakglassProgramId: PublicKey,
+  protectedProgram: PublicKey,
+  mint: PublicKey,
+  owner: PublicKey,
+  nonce?: bigint,
+) {
+  const { config, pauseState } = protocolAddresses(breakglassProgramId, protectedProgram);
+  const [flowLimiter] = findFlowLimiterPda(breakglassProgramId, config, mint);
+  const holdNonce = nonce ?? randomNonce();
+  const [hold] = findPendingWithdrawalPda(breakglassProgramId, config, owner, holdNonce);
+  const [eventAuthority] = findEventAuthorityPda(breakglassProgramId);
+  const [gateSigner] = findGateSignerPda(protectedProgram);
+  return { config, pauseState, flowLimiter, hold, holdNonce, eventAuthority, gateSigner };
+}
+
+/** A random u64 hold nonce (collisions are astronomically unlikely). */
+export function randomNonce(): bigint {
+  const b = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) b[i] = Math.floor(Math.random() * 256);
+  return Buffer.from(b).readBigUInt64LE();
 }
 
 /** The accounts `pause` / `renew_pause` take for a given signer (guardian or admin). */

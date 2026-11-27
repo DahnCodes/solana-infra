@@ -70,5 +70,11 @@ export const DEFAULTS = {
 /** `Paused.kind` event values. Account fields use the enum form instead ({ guardian: {} } etc.). */
 export const PAUSE_KIND = { guardian: 0, autoTrip: 1, admin: 2 } as const;
 
+/** Limiter defaults (FlowLimiter). `instantAllowance` u64::MAX = no screening. */
+export const LIMITER_BUCKETS = 12;
+export const DEFAULT_INSTANT_ALLOWANCE = "18446744073709551615";
+/** `Paused.reason` written by an auto-trip (`Paused.kind` 1). */
+export const AUTO_TRIP_REASON = 1;
+
 /** HoldResolved.outcome values. */
 export const HOLD_OUTCOME = { claimed: 0, released: 1, rejected: 2 } as const;
