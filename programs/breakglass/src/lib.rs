@@ -14,7 +14,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("8Y9J7ZBRHZ9b8Cr5ntMzwmA6KtwfPXdF1hLxuDE59xZ8");
+declare_id!("AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB");
 
 #[program]
 pub mod breakglass {

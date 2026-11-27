@@ -1,17 +1,18 @@
 [toolchain]
 anchor_version = "0.31.1"
+solana_version = "2.1.21"
 
 [features]
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-breakglass = "8Y9J7ZBRHZ9b8Cr5ntMzwmA6KtwfPXdF1hLxuDE59xZ8"
-test_vault = "32m1FAwDhkApLNp7TuCdZqmT8gYn8yxEJAW74SokUBXv"
-
 [programs.devnet]
-breakglass = "8Y9J7ZBRHZ9b8Cr5ntMzwmA6KtwfPXdF1hLxuDE59xZ8"
-test_vault = "32m1FAwDhkApLNp7TuCdZqmT8gYn8yxEJAW74SokUBXv"
+breakglass = "AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB"
+test_vault = "2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn"
+
+[programs.localnet]
+breakglass = "AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB"
+test_vault = "2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn"
 
 [registry]
 url = "https://api.apr.dev"

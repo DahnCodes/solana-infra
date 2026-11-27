@@ -6,7 +6,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, TransferChecked};
 use breakglass_sdk::breakglass::{program::Breakglass, state::ProtocolConfig};
 use breakglass_sdk::{require_scope_open, scopes};
 
-declare_id!("32m1FAwDhkApLNp7TuCdZqmT8gYn8yxEJAW74SokUBXv");
+declare_id!("2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn");
 
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const VAULT_TOKEN_SEED: &[u8] = b"vault_token";

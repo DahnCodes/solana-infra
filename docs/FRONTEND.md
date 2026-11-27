@@ -25,7 +25,7 @@ const cfg = await program.account.protocolConfig.fetch(config);
 const pauses = await program.account.pauseState.fetch(pauseState);
 ```
 
-Until Phase 0 builds, `clients/ts/idl/` is empty. Until the package is published, consume it as a path or git dependency (`"@breakglass/client": "file:../solana-infra/clients/ts"`) and run `yarn build` in `clients/ts`.
+`clients/ts/idl/` holds the generated IDL and types (committed, refreshed by `scripts/sync-client.sh` after every program change). Until the package is published, consume it as a path or git dependency (`"@breakglass/client": "file:../solana-infra/clients/ts"`) and run `yarn build` in `clients/ts`.
 
 Versions: `@coral-xyz/anchor` **0.31.1** (must match the program) and `@solana/web3.js` 1.x.
 
@@ -33,10 +33,10 @@ Versions: `@coral-xyz/anchor` **0.31.1** (must match the program) and `@solana/w
 
 | Program | Localnet / devnet | Mainnet |
 | --- | --- | --- |
-| `breakglass` | `8Y9J7ZBRHZ9b8Cr5ntMzwmA6KtwfPXdF1hLxuDE59xZ8` | not deployed |
-| `test_vault` (example protocol, never mainnet) | `32m1FAwDhkApLNp7TuCdZqmT8gYn8yxEJAW74SokUBXv` | never |
+| `breakglass` | `AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB` | not deployed |
+| `test_vault` (example protocol, never mainnet) | `2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn` | never |
 
-These are the starter IDs. `anchor keys sync` replaces them with the deployer's own keys, so **read the ID from the IDL's `address` field** (Anchor does this for you) instead of hard-coding it. The source of truth is `Anchor.toml`.
+These are the IDs from the project owner's Phase 0 build. `anchor keys sync` replaces them with the deployer's own keys, so **read the ID from the IDL's `address` field** (Anchor does this for you) instead of hard-coding it. The source of truth is `Anchor.toml`.
 
 Each protected protocol is identified by its own program ID (`protected_program`). Every per-protocol account is derived from it.
 

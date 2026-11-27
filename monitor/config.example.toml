@@ -7,8 +7,8 @@ ws_urls = ["ws://127.0.0.1:8900"]
 
 [protocol]
 name = "test-vault"
-breakglass_program = "8Y9J7ZBRHZ9b8Cr5ntMzwmA6KtwfPXdF1hLxuDE59xZ8"
-protected_program = "32m1FAwDhkApLNp7TuCdZqmT8gYn8yxEJAW74SokUBXv"
+breakglass_program = "AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB"
+protected_program = "2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn"
 vault_token_accounts = []
 
 [detectors]

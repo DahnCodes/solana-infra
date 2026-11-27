@@ -3,6 +3,8 @@ name = "breakglass-sdk"
 version = "0.1.0"
 description = "Helpers for protocols integrating the Breakglass gate"
 edition = "2021"
+# Solana 2.1 platform-tools (v1.43) ship rustc 1.79. Keeps `cargo update` on compatible crates.
+rust-version = "1.79"
 
 [features]
 idl-build = ["anchor-lang/idl-build", "breakglass/idl-build"]
