@@ -17,3 +17,10 @@ Claude Code updates this file at the end of every phase (see docs/BUILD_PLAN.md)
 ## Decisions
 
 (Ambiguities resolved during the build, with the reason.)
+
+- 2026-11-27: one `backend` branch for all phases instead of a branch per phase. It ships to `main` through a single PR. Requested by the project owner.
+- 2026-11-27: the frontend contract lives in `docs/FRONTEND.md` and `clients/ts`. Every phase keeps both in sync (see BUILD_PLAN "API contract rules").
+
+## Breaking changes
+
+(Any change to an event field, account layout, instruction signature, error order or monitor API response that the frontend must react to, with the date and phase.)

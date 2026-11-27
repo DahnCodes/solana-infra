@@ -5,7 +5,9 @@
   "scripts": {
     "lint": "prettier --check \"tests/**/*.ts\" \"scripts/**/*.ts\"",
     "test": "anchor test",
-    "test:attacks": "echo 'Added in Phase 7' && exit 1"
+    "test:attacks": "echo 'Added in Phase 7' && exit 1",
+    "client:sync": "scripts/sync-client.sh",
+    "client:check": "node scripts/check-client-drift.js"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",
