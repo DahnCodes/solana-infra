@@ -3,13 +3,13 @@
 This is the build plan for the Breakglass backend. Claude Code builds it, one phase at a time. Each phase ends with something you (the human) can run and check yourself before the next phase starts.
 
 - **Spec:** `docs/SPEC.md` is the source of truth for behavior. This plan says *in what order* to build it and *how to prove* each piece works.
-- **Scope:** backend only. That means the on-chain program, the integration SDK, an example protected protocol, the off-chain monitor, alerting, and the guardian bot. No frontend.
+- **Scope:** backend only. That means the on-chain program, the integration SDK, an example protected protocol, the off-chain monitor, alerting, and the guardian bot. No frontend in this repo, but the backend ships a frontend-ready contract: `docs/FRONTEND.md` plus the TypeScript client in `clients/ts/`.
 
 ---
 
 ## How Claude Code should work through this plan
 
-1. Do **one phase at a time**, on its own branch (`phase-N-short-name`). Open a PR per phase.
+1. Do **one phase at a time**, all on the single `backend` branch. No branch per phase. Commit each finished phase with a message starting `Phase N:` and push `backend`. `backend` reaches `main` through one PR when the human decides to ship.
 2. Before writing code for a phase, re-read the matching spec sections listed in that phase.
 3. Every phase has **Acceptance tests**. The phase is not done until all of them pass locally with the commands shown.
 4. Write the tests first, or alongside the code. Never weaken or skip a test to make it pass.
@@ -21,6 +21,25 @@ This is the build plan for the Breakglass backend. Claude Code builds it, one ph
 7. Keep defaults from the spec as named constants in `programs/breakglass/src/constants.rs`, not magic numbers.
 8. No Breakglass instruction may ever hold token authority or transfer user funds. If a design seems to need it, stop and ask.
 9. If something in the spec is ambiguous, pick the safer (fail-closed) reading. Note it in `docs/PROGRESS.md` under "Decisions".
+10. Follow the **API contract rules** below in every phase. A phase is not done until they hold.
+
+### API contract rules (every phase)
+
+The frontend is built by someone else against `docs/FRONTEND.md`. It must never have to guess or read Rust.
+
+- Every phase that adds or changes an instruction, account, event or error updates `docs/FRONTEND.md` in the same commit: args, signers, accounts, PDA seeds, field names as seen in TypeScript, and status 🔜 → ✅.
+- After `anchor build`, run `scripts/sync-client.sh`. It copies `target/idl/breakglass.json` and `target/types/breakglass.ts` into `clients/ts/idl/` (committed) and runs `scripts/check-client-drift.js`.
+- `clients/ts/src` stays in step with the program: seeds and PDA helpers (`pdas.ts`), the error table (`errors.ts`), constants (`constants.ts`). Add a helper for every new PDA.
+- `errors.rs` is append-only, so error codes never shift.
+- Event fields and account layouts are a contract. A change to either is listed under "Breaking changes" in `docs/PROGRESS.md`.
+- The monitor HTTP API (Phase 5+) implements exactly the shapes in `docs/FRONTEND.md` section 7, or updates that section in the same commit.
+
+Extra acceptance check for **every** phase:
+
+```bash
+anchor build && scripts/sync-client.sh   # must print "client in sync"
+(cd clients/ts && yarn install && yarn build)
+```
 
 ---
 
@@ -326,11 +345,15 @@ Expected: the script prints that the proposal was queued with its executable tim
   - generic signed webhook (HMAC-SHA256 header)
   - Leave a PagerDuty sink stub for later.
 - Store: Postgres via `sqlx` with tables `protocols`, `events`, `incidents`, `alerts`, `acks`. `docker-compose.yml` for local Postgres. Run migrations with `sqlx migrate`.
-- Minimal admin HTTP API (axum):
-  - `GET /incidents`
-  - `POST /incidents/:id/ack`
-  - `GET /holds`
+- Admin HTTP API (axum), implementing exactly the contract in `docs/FRONTEND.md` section 7:
   - `GET /health`
+  - `GET /incidents`, `GET /incidents/:id`
+  - `POST /incidents/:id/ack` (bearer token)
+  - `GET /holds`
+  - `GET /events`
+  - `GET /stream` (Server-Sent Events)
+  - `[api] bind` and `cors_origins` in `monitor/config.toml`, JSON errors, cursor pagination, amounts as decimal strings
+  - an API test per endpoint that checks the response matches the documented shape
 
 **Acceptance tests**
 - Unit tests for every detector, driven by fixtures (no network).
@@ -408,6 +431,8 @@ Expected: `ATTACK FAILED: N/N withdrawals frozen by guardian bot`.
   - `anchor test`
   - `yarn test:attacks`
   - `cd monitor && cargo test`
+  - `scripts/sync-client.sh --check` (fails if `clients/ts/idl` is stale or the client drifted)
+  - `cd clients/ts && yarn build`
 - Devnet runbook in `docs/DEVNET.md`: deploy, then run the attacks against devnet with the monitor and Telegram alerts live.
 
 **Acceptance tests**
@@ -417,7 +442,7 @@ yarn test:attacks
 Expected: `6/6 PASS`.
 
 **Manual check (you)**
-- Push a branch and watch CI go green.
+- Push `backend` and watch CI go green.
 - Follow `docs/DEVNET.md` once. You need devnet SOL from `solana airdrop 2` or a faucet.
 
 ---

@@ -3,6 +3,8 @@ name = "test-vault"
 version = "0.1.0"
 description = "Example protocol protected by Breakglass. Has a planted bug behind a feature, for attack tests only."
 edition = "2021"
+# Solana 2.1 platform-tools (v1.43) ship rustc 1.79. Keeps `cargo update` on compatible crates.
+rust-version = "1.79"
 
 [lib]
 crate-type = ["cdylib", "lib"]

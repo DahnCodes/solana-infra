@@ -5,6 +5,7 @@ Emergency circuit breaker and outflow gate for Solana protocols. An independent 
 - What it does and why: [`docs/SPEC.md`](docs/SPEC.md)
 - How it gets built, phase by phase: [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md)
 - Where the build is: [`docs/PROGRESS.md`](docs/PROGRESS.md)
+- **Building a frontend?** Start at [`docs/FRONTEND.md`](docs/FRONTEND.md): program IDs, PDAs, instructions, events, error codes and the monitor HTTP API, plus the TypeScript client in [`clients/ts`](clients/ts).
 
 ## Layout
 
@@ -12,10 +13,11 @@ Emergency circuit breaker and outflow gate for Solana protocols. An independent 
 programs/breakglass     on-chain program (Anchor)
 programs/test-vault     example protocol that uses Breakglass; has a planted bug behind a feature, for attack tests
 crates/breakglass-sdk   helpers a protocol calls to use the gate
+clients/ts              TypeScript client for frontends: generated IDL + types, PDA helpers, error codes, event decoding
 tests/                  TypeScript integration tests (run by `anchor test`)
 scripts/                demo and attack scripts you run by hand
 monitor/                off-chain monitor + alerts + guardian bot (separate Cargo workspace)
-docs/                   spec, build plan, progress
+docs/                   spec, build plan, progress, frontend contract
 ```
 
 ## 1. Install the tools (one time)
@@ -87,18 +89,29 @@ cargo test -p breakglass
 cd monitor && cargo test && cd ..
 ```
 
-## 4. Run the monitor (skeleton)
+## 4. Run the monitor
 
 ```bash
+docker compose -f monitor/docker-compose.yml up -d   # local Postgres
 cd monitor
-cp config.example.toml config.toml
-cp .env.example .env
+cp config.example.toml config.toml   # set vault_token_accounts, RPCs, sinks
+cp .env.example .env                 # DATABASE_URL, MONITOR_API_TOKEN, Telegram/webhook secrets
+cargo test                           # unit + Postgres tests (needs the Postgres above)
 cargo run -- --config config.toml
 ```
 
-For now it only starts the pipeline and heartbeats. Real ingestion and alerts arrive in Phase 5 of the build plan.
+The monitor watches the Breakglass and protected programs over 2+ RPCs and pages on every event that matters, plus unexplained vault drops, program upgrades and dead RPCs. It serves the admin API on `http://127.0.0.1:8080` (see [`docs/FRONTEND.md`](docs/FRONTEND.md) section 7). End-to-end check against a local validator: `yarn ts-node scripts/monitor-e2e.ts`.
 
-## 5. Run things by hand on a local validator
+## 5. Attack suite and CI
+
+```bash
+docker compose -f monitor/docker-compose.yml up -d   # Postgres for the monitor
+yarn test:attacks                                     # six attacks against a fresh validator: expect 6/6 PASS
+```
+
+CI (`.github/workflows/ci.yml`) runs the lint, the contract drift check, every test suite and the attack suites on each push to `backend`. To run the attacks on devnet with live alerts, follow [`docs/DEVNET.md`](docs/DEVNET.md).
+
+## 6. Run things by hand on a local validator
 
 ```bash
 solana-test-validator --reset     # terminal 1: leave running
@@ -106,26 +119,35 @@ anchor deploy                     # terminal 2
 yarn ts-node scripts/<script>.ts  # demo scripts, added phase by phase
 ```
 
-## Connect to your GitHub repo
+## Branches
+
+There is one working branch: **`backend`**. Every phase is committed there (commit messages start with `Phase N:`). There are no per-phase branches. When the backend is ready to ship, open one pull request from `backend` into `main`.
 
 ```bash
-git init
-git add .
-git commit -m "Breakglass starter"
-git branch -M main
-git remote add origin git@github.com:<you>/<repo>.git
-git push -u origin main
+git clone git@github.com:DahnCodes/solana-infra.git
+cd solana-infra
+git checkout backend
 ```
 
 Never commit keypairs. `.gitignore` already excludes `*-keypair.json`, `id.json`, `keys/` and `monitor/.env`. The program keypairs in `target/deploy/` are ignored too. Back them up yourself if you deploy to devnet or mainnet, because they control your program IDs.
 
+## For the frontend developer
+
+The backend is built so a frontend can plug in without reading Rust:
+
+1. Read [`docs/FRONTEND.md`](docs/FRONTEND.md). Each instruction, account, event and endpoint is marked live (✅) or planned (🔜, with the phase that adds it).
+2. Use the TypeScript client in `clients/ts`. It has the generated IDL and types (`clients/ts/idl/`), PDA helpers, scope masks, the error code table and event decoding.
+3. Run a local validator with the programs deployed (section 6) and point the app at `http://127.0.0.1:8899`.
+
+Every phase keeps the contract in sync. `scripts/sync-client.sh` refreshes the IDL and fails if the client or the doc drifted from the program. In CI, `scripts/sync-client.sh --check` does the same check.
+
 ## Building with Claude Code
 
-Open the repo in Claude Code and say:
+Open the repo on the `backend` branch in Claude Code and say:
 
 > Read CLAUDE.md, then do Phase 0 of docs/BUILD_PLAN.md.
 
-After each phase, run the phase's **Manual check** yourself, then tell Claude Code to start the next phase.
+After each phase, run the phase's **Manual check** yourself, then tell Claude Code to start the next phase. Claude Code commits each phase to `backend`.
 
 ## Troubleshooting
 

@@ -73,6 +73,18 @@ pub struct WithdrawalScreenQueued {
     pub release_at: i64,
 }
 
+/// A withdrawal that would have crossed the window cap was held (and the scope
+/// auto-tripped; `LimitTripped` and `Paused` are emitted with it).
+#[event]
+pub struct LimitHoldQueued {
+    pub config: Pubkey,
+    pub hold: Pubkey,
+    pub mint: Pubkey,
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub release_at: i64,
+}
+
 #[event]
 pub struct LimitTripped {
     pub config: Pubkey,
@@ -110,6 +122,20 @@ pub struct ConfigChangeProposed {
 pub struct ConfigChangeExecuted {
     pub config: Pubkey,
     pub change: Pubkey,
+}
+
+#[event]
+pub struct ConfigChangeCancelled {
+    pub config: Pubkey,
+    pub change: Pubkey,
+}
+
+/// The admin tightened a limiter immediately (no timelock needed).
+#[event]
+pub struct LimitsTightened {
+    pub config: Pubkey,
+    pub flow_limiter: Pubkey,
+    pub mint: Pubkey,
 }
 
 #[event]

@@ -13,8 +13,9 @@ pub const HOUR: i64 = 3_600;
 pub const DAY: i64 = 24 * HOUR;
 
 pub const MAX_GUARDIANS: usize = 5;
-/// Max simultaneously active scope pauses tracked in PauseState.
-pub const MAX_ACTIVE_PAUSES: usize = 16;
+/// Max simultaneously active pause entries in PauseState. One entry per
+/// (scope, kind, paused_by), so 64 lets every scope be paused at once.
+pub const MAX_ACTIVE_PAUSES: usize = 64;
 pub const MAX_SCOPES: u8 = 64;
 
 // Pause policy
@@ -31,6 +32,10 @@ pub const DEFAULT_WINDOW_SECS: i64 = HOUR;
 pub const DEFAULT_HOLD_SECS: i64 = 6 * HOUR;
 pub const DEFAULT_SCREEN_SECS: i64 = 120;
 pub const BPS_DENOMINATOR: u64 = 10_000;
+/// Default instant allowance: no screening (zero-loss screen-all mode sets 0, Phase 3).
+pub const DEFAULT_INSTANT_ALLOWANCE: u64 = u64::MAX;
+/// `ScopePause.reason` / `Paused.reason` written by an auto-trip.
+pub const AUTO_TRIP_REASON: u16 = 1;
 
 // Timelock
 pub const MIN_TIMELOCK_SECS: i64 = 24 * HOUR;

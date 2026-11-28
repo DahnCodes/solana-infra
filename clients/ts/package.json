@@ -1,0 +1,21 @@
+{
+  "name": "@breakglass/client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Typed client for the Breakglass program: PDAs, constants, error codes, event decoding, plus the generated IDL and types.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "idl"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@coral-xyz/anchor": "0.31.1",
+    "@solana/web3.js": "^1.95.4"
+  },
+  "devDependencies": {
+    "@coral-xyz/anchor": "0.31.1",
+    "@solana/web3.js": "^1.95.4",
+    "typescript": "^5.7.3"
+  }
+}

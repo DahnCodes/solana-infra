@@ -42,4 +42,29 @@ pub enum BreakglassError {
     MathOverflow,
     #[msg("Account is not executable")]
     NotExecutable,
+    // Phase 1 (append only)
+    #[msg("Scope is not paused")]
+    ScopeNotPaused,
+    #[msg("Pause duration must be positive")]
+    InvalidDuration,
+    #[msg("Key is not a guardian of this config")]
+    GuardianNotFound,
+    // Phase 2 (append only)
+    #[msg("Flow limiter parameters out of range")]
+    InvalidLimiterConfig,
+    #[msg("Vault token account does not match the flow limiter")]
+    WrongVault,
+    #[msg("Hold account does not match its seeds, owner, mint or limiter")]
+    WrongHold,
+    // Phase 4 (append only)
+    #[msg("Change loosens a limit; propose it through the timelock")]
+    NotTightening,
+    #[msg("Key is already a guardian")]
+    DuplicateGuardian,
+    #[msg("Pending change was already executed or cancelled")]
+    ChangeClosed,
+    #[msg("Accounts passed do not match the pending change")]
+    WrongChangeAccounts,
+    #[msg("Pause policy values out of range")]
+    InvalidPolicy,
 }

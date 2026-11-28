@@ -16,12 +16,30 @@ pub struct InitializeConfig<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// The protocol admin (can be a Squads vault PDA signing via the multisig).
-    pub admin: Signer<'info>,
+    /// CHECK: the protocol admin, a plain pubkey (typically a Squads vault PDA).
+    /// It doesn't sign here: the upgrade authority below authorizes the
+    /// registration, so a multisig vault can be named admin directly.
+    #[account(constraint = admin.key() != Pubkey::default() @ BreakglassError::Unauthorized)]
+    pub admin: UncheckedAccount<'info>,
+
+    /// The protected program's upgrade authority. Only it can register the
+    /// program, so nobody can squat a protocol's config PDA and become its admin.
+    pub upgrade_authority: Signer<'info>,
 
     /// CHECK: only used as a seed and checked to be an executable program.
     #[account(constraint = protected_program.executable @ BreakglassError::NotExecutable)]
     pub protected_program: UncheckedAccount<'info>,
+
+    /// The protected program's ProgramData (BPF upgradeable loader). Immutable
+    /// or non-upgradeable programs can't be registered (fail closed).
+    #[account(
+        seeds = [protected_program.key().as_ref()],
+        bump,
+        seeds::program = anchor_lang::solana_program::bpf_loader_upgradeable::ID,
+        constraint = protected_program_data.upgrade_authority_address
+            == Some(upgrade_authority.key()) @ BreakglassError::Unauthorized
+    )]
+    pub protected_program_data: Account<'info, ProgramData>,
 
     #[account(
         init,

@@ -6,9 +6,15 @@ Helper and demo scripts that you run by hand against a local validator or devnet
 | --- | --- | --- |
 | `demo-pause.ts` | 1 | Guardian pause blocks a withdraw, unpause restores it |
 | `demo-outflow.ts` | 2 | Allow / Hold / auto-trip in action |
+| `demo-common.ts` | 1–2 | Shared setup for the demos (not run directly) |
+| `test-attack.sh` | 3 | `yarn test:attack`: full suite on the planted-bug build, then rebuilds the safe test-vault |
+| `gen-fixtures.js` | 2 | Regenerates `tests/fixtures/` (run with `node`, after `anchor keys sync`) |
 | `attack-big-drain.ts` | 3 | Planted bug can't drain the vault |
-| `demo-timelock.ts` | 4 | Proposals wait, early execute fails, guardian veto works |
-| `attack-screened.ts` | 6 | Guardian bot freezes attacker withdrawals |
-| `attacks/*.ts` | 7 | Full attack suite, `yarn test:attacks` |
+| `demo-timelock.ts` | 4 | Proposals wait, early execute fails, guardian veto works, tightening applies at once |
+| `squads-propose.ts` | 4 | `propose_config` through a Squads v4 multisig (devnet by default) |
+| `monitor-e2e.ts` | 5 | `yarn monitor:e2e`: monitor end to end (two RPCs, alerts within 5s, RPC killed) |
+| `attack-screened.ts` | 6 | Guardian bot freezes a fresh wallet's screened withdrawals |
+| `bot-e2e.ts` | 6 | `yarn bot:e2e`: screening, balance-delta pause, cooldown handling (planted-bug build) |
+| `attacks/*.ts`, `attacks/run.sh` | 7 | The six-attack suite: `yarn test:attacks` (localnet), or one by one on devnet (docs/DEVNET.md) |
 
 Run with: `yarn ts-node scripts/<name>.ts` (local validator running, programs deployed).

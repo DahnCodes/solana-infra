@@ -1,0 +1,5 @@
+# Default DATABASE_URL for `cargo test` (sqlx::test) and `cargo run`: the
+# docker-compose Postgres. A DATABASE_URL in the environment (or .env for
+# `cargo run`) takes precedence.
+[env]
+DATABASE_URL = { value = "postgres://breakglass:breakglass@localhost:5432/breakglass", force = false }
