@@ -176,7 +176,8 @@ export function WaitingRoom() {
                       c.account.action.kind === "releaseHeld" &&
                       c.account.action.hold === h.address &&
                       !c.account.executed &&
-                      !c.account.vetoed,
+                      !c.account.vetoed &&
+                      !c.account.cancelled,
                   ) ?? null
                 }
                 scopePaused={isScopePaused(

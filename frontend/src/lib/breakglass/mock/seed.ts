@@ -10,6 +10,7 @@
  *   180,000 frozen by the guardian.
  * - A proposal to raise the cap to 250,000, executable in 28 hours.
  */
+import { limiterParams } from "../accounts.ts";
 import { scopeMask, TEST_VAULT_SCOPES } from "../constants.ts";
 import type { Address, UnixSeconds } from "../primitives.ts";
 import { mockAddress } from "./address.ts";
@@ -104,10 +105,13 @@ export function seedDemo(engine: MockEngine, now: UnixSeconds): void {
   engine.proposeConfig(at(admin, 20 * H), config, {
     kind: "raiseLimits",
     mint: tv.mint,
-    capAbsolute: usdc(250_000),
-    capBpsOfVault: 1500,
-    largeThreshold: usdc(100_000),
-    largeThresholdBps: 500,
+    params: {
+      ...limiterParams(engine.limiterFor(config, () => true)!.limiter),
+      capAbsolute: usdc(250_000),
+      capBpsOfVault: 1500,
+      largeThreshold: usdc(100_000),
+      largeThresholdBps: 500,
+    },
   });
 
   // Holds: one now claimable, one frozen by the guardian, one still waiting.
@@ -135,7 +139,7 @@ export function seedDemo(engine: MockEngine, now: UnixSeconds): void {
   // The guardian has seen the first large-withdrawal alert.
   // Incidents are newest first, so the first alert is the last match.
   const first = engine.incidents.findLast(
-    (i) => i.detector === "large-withdrawal",
+    (i) => i.detector === "large_withdrawal",
   );
   if (first) {
     first.status = "acked";

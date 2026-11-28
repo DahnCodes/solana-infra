@@ -32,10 +32,18 @@ export type IncidentDetail = Incident & {
   alerts: Alert[];
 };
 
+/** An event's name as the monitor sends it: the Rust struct name. */
+export type MonitorEventKind = Capitalize<BreakglassEventName>;
+
+/** "limitTripped" → "LimitTripped". */
+export const monitorEventKind = (name: BreakglassEventName): MonitorEventKind =>
+  (name.charAt(0).toUpperCase() + name.slice(1)) as MonitorEventKind;
+
 /** A Breakglass event as the monitor stores it. */
 export type MonitorEvent = {
   id: string;
-  kind: BreakglassEventName | (string & {});
+  /** The Rust struct name, such as "LimitTripped" (not camelCase). */
+  kind: MonitorEventKind | (string & {});
   signature: string;
   slot: number;
   block_time: string;

@@ -39,6 +39,9 @@ describe("register form", () => {
     assert.equal(config.timelockSecs, 36 * 3600);
     assert.equal(config.unpausableMask, BigInt(8));
     assert.deepEqual(config.guardians, [B]);
+    assert.equal(config.admin, B, "an empty admin is the connected wallet");
+    assert.equal(toConfigArgs({ ...form, admin: ` ${D} ` }, B).admin, D);
+    assert.ok(validate({ ...form, admin: "nope" }).admin);
     const limiter = toLimiterArgs(form.limiters[0], "cfg");
     assert.equal(limiter.capAbsolute, BigInt(150_000_000_000));
     assert.equal(limiter.capBpsOfVault, 1500);

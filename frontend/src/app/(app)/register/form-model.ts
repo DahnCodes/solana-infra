@@ -37,6 +37,8 @@ export type LimiterForm = {
 
 export type RegisterForm = {
   program: string;
+  /** The admin's address; empty means the connected wallet. */
+  admin: string;
   guardians: string[];
   /** Scopes that can never be paused. */
   unpausable: number[];
@@ -73,6 +75,7 @@ export function newLimiter(id: number): LimiterForm {
 export function emptyForm(): RegisterForm {
   return {
     program: "",
+    admin: "",
     guardians: [""],
     unpausable: [],
     timelockHours: String(TIMELOCK_HOURS.max),
@@ -112,6 +115,9 @@ export function validate(form: RegisterForm): FormErrors {
 
   if (!isAddress(form.program)) {
     errors.program = "Enter the program's address (base58).";
+  }
+  if (form.admin.trim() && !isAddress(form.admin)) {
+    errors.admin = "Enter the admin's address (base58), or leave it empty.";
   }
 
   const guardians = form.guardians.map((g) => g.trim());
@@ -190,14 +196,18 @@ export function validate(form: RegisterForm): FormErrors {
   return errors;
 }
 
+/** The admin the form names: the typed address, or the connected wallet. */
+export const adminOf = (form: RegisterForm, wallet: string) =>
+  form.admin.trim() || wallet;
+
 /** The instruction arguments. Call only when validate() returns no errors. */
 export function toConfigArgs(
   form: RegisterForm,
-  admin: string,
+  wallet: string,
 ): InitializeConfigArgs {
   return {
     protectedProgram: form.program.trim(),
-    admin,
+    admin: adminOf(form, wallet),
     guardians: form.guardians.map((g) => g.trim()).filter(Boolean),
     unpausableMask: form.unpausable.length
       ? scopeMask(...form.unpausable)

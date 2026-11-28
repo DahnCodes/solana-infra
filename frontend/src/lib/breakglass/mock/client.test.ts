@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
+import { limiterParams } from "../accounts.ts";
 import { scopeMask, TEST_VAULT_SCOPES as S } from "../constants.ts";
 import type {
   BreakglassEvent,
@@ -459,8 +460,65 @@ describe("timelocked changes", () => {
     assert.equal(limiter.account.capAbsolute, usdc(250_000));
     await rejects(
       client.executeConfig({ config, change: change.address }),
-      "NotExecutable",
+      "ChangeClosed",
     );
+  });
+
+  it("checks each action when it is proposed", async () => {
+    client.setWallet(W.admin.address);
+    await rejects(
+      client.proposeConfig({
+        config,
+        action: { kind: "addGuardian", guardian: W.guardian.address },
+      }),
+      "DuplicateGuardian",
+    );
+    const [limiter] = await client.listFlowLimiters(config);
+    await rejects(
+      client.proposeConfig({
+        config,
+        action: {
+          kind: "raiseLimits",
+          mint: limiter.account.mint,
+          params: { ...limiterParams(limiter.account), holdSecs: 0 },
+        },
+      }),
+      "InvalidLimiterConfig",
+    );
+    const protocol = (await client.listConfigs())[0].account;
+    await rejects(
+      client.proposeConfig({
+        config,
+        action: {
+          kind: "changePolicy",
+          policy: protocol.policy,
+          unpausableMask: protocol.unpausableMask,
+          timelockSecs: 12 * H,
+        },
+      }),
+      "InvalidTimelock",
+    );
+  });
+
+  it("changes the policy, always-open scopes and timelock together", async () => {
+    client.setWallet(W.admin.address);
+    const protocol = (await client.listConfigs())[0].account;
+    const proposed = await client.proposeConfig({
+      config,
+      action: {
+        kind: "changePolicy",
+        policy: { ...protocol.policy, cooldownSecs: 2 * H },
+        unpausableMask: scopeMask(S.repay, S.deposit),
+        timelockSecs: 24 * H,
+      },
+    });
+    const { change } = dataOf(proposed.events, "configChangeProposed");
+    client.advanceClock(48 * H);
+    await client.executeConfig({ config, change });
+    const after = (await client.listConfigs())[0].account;
+    assert.equal(after.policy.cooldownSecs, 2 * H);
+    assert.equal(after.unpausableMask, scopeMask(S.repay, S.deposit));
+    assert.equal(after.timelockSecs, 24 * H);
   });
 
   it("lets the guardian veto and the admin cancel", async () => {
@@ -490,9 +548,34 @@ describe("timelocked changes", () => {
       action: { kind: "setAdmin", admin: W.user.address },
     });
     const otherChange = dataOf(other.events, "configChangeProposed").change;
-    await client.cancelConfig({ config, change: otherChange });
+    const cancelled = await client.cancelConfig({
+      config,
+      change: otherChange,
+    });
+    assert.deepEqual(names(cancelled.events), ["configChangeCancelled"]);
     const left = await client.listPendingChanges(config);
-    assert.ok(!left.some((c) => c.address === otherChange));
+    const kept = left.find((c) => c.address === otherChange);
+    assert.equal(kept?.account.cancelled, true);
+    await rejects(
+      client.cancelConfig({ config, change: otherChange }),
+      "ChangeClosed",
+    );
+
+    // The admin can also clear away a vetoed change.
+    await client.cancelConfig({ config, change });
+    client.setWallet(W.guardian.address);
+    await rejects(client.vetoConfig({ config, change }), "ChangeClosed");
+  });
+
+  it("lets a guardian veto after the timelock, until execution", async () => {
+    const [change] = await client.listPendingChanges(config);
+    client.advanceClock(30 * H);
+    client.setWallet(W.guardian.address);
+    await client.vetoConfig({ config, change: change.address });
+    await rejects(
+      client.vetoConfig({ config, change: change.address }),
+      "Vetoed",
+    );
   });
 
   it("releases a frozen hold through the timelock; the claim isn't capped again", async () => {
@@ -504,13 +587,58 @@ describe("timelocked changes", () => {
     client.setWallet(W.user.address); // anyone can execute
     const executed = await client.executeConfig({ config, change });
     assert.deepEqual(names(executed.events), [
-      "configChangeExecuted",
       "holdResolved",
+      "configChangeExecuted",
     ]);
 
     client.setWallet(W.user2.address);
     const claimed = await client.claimHeld({ config, hold: frozen.address });
     assert.equal(claimed.decision, "allow");
+  });
+});
+
+describe("tightening limits", () => {
+  it("applies a stricter limit at once and refuses a looser one", async () => {
+    const [limiter] = await client.listFlowLimiters(config);
+    const params = limiterParams(limiter.account);
+    const mint = limiter.account.mint;
+    client.setWallet(W.guardian.address);
+    await rejects(
+      client.tightenLimits({ config, mint, params }),
+      "Unauthorized",
+    );
+    client.setWallet(W.admin.address);
+    const done = await client.tightenLimits({
+      config,
+      mint,
+      params: { ...params, capAbsolute: usdc(100_000), holdSecs: 12 * H },
+    });
+    assert.deepEqual(names(done.events), ["limitsTightened"]);
+    const [after] = await client.listFlowLimiters(config);
+    assert.equal(after.account.capAbsolute, usdc(100_000));
+    assert.equal(after.account.holdSecs, 12 * H);
+    await rejects(
+      client.tightenLimits({
+        config,
+        mint,
+        params: { ...limiterParams(after.account), capAbsolute: usdc(200_000) },
+      }),
+      "NotTightening",
+    );
+  });
+
+  it("keeps the counted total when the window grows", async () => {
+    const [limiter] = await client.listFlowLimiters(config);
+    const before = windowUsage(limiter.account, await client.getClock());
+    client.setWallet(W.admin.address);
+    await client.tightenLimits({
+      config,
+      mint: limiter.account.mint,
+      params: { ...limiterParams(limiter.account), windowSecs: 2 * H },
+    });
+    const [after] = await client.listFlowLimiters(config);
+    assert.equal(after.account.windowSecs, 2 * H);
+    assert.equal(windowUsage(after.account, await client.getClock()), before);
   });
 });
 

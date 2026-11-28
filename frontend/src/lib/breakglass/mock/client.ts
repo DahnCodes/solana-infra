@@ -428,6 +428,12 @@ export class MockClient implements BreakglassClient {
     );
   }
 
+  tightenLimits(args: Parameters<BreakglassClient["tightenLimits"]>[0]) {
+    return this.write((ctx) =>
+      this.engine.tightenLimits(ctx, args.config, args.mint, args.params),
+    );
+  }
+
   proposeConfig(args: Parameters<BreakglassClient["proposeConfig"]>[0]) {
     return this.write((ctx) =>
       this.engine.proposeConfig(ctx, args.config, args.action),

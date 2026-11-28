@@ -68,8 +68,8 @@ export function scopesInMask(mask: ScopeMask): ScopeId[] {
 }
 
 /**
- * Code for each planned config action, as ConfigChangeProposed.actionKind
- * carries it. PROVISIONAL until backend phase 4 fixes the numbering.
+ * Code for each config action, as ConfigChangeProposed.actionKind carries
+ * it (FRONTEND.md section 6, `ACTION_KIND`).
  */
 export const CONFIG_ACTION_CODES = {
   raiseLimits: 0,

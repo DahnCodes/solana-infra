@@ -25,6 +25,7 @@ import { MOCK_WALLETS } from "@/lib/breakglass/mock/seed";
 import { cx } from "@/lib/cx";
 import { formatUnits, parseUnits, shortAddress } from "@/lib/format";
 import {
+  adminOf,
   emptyForm,
   FORM_SCOPES,
   newLimiter,
@@ -61,8 +62,9 @@ export function RegisterFlow() {
     return (
       <Panel title="Connect a wallet to register">
         <p className="text-body text-ink-secondary">
-          The wallet that registers a protocol becomes its admin, and must be
-          the protected program&apos;s upgrade authority.
+          The wallet that registers a protocol must be the protected
+          program&apos;s upgrade authority. The admin can be that wallet or
+          another address, such as a Squads multisig.
         </p>
       </Panel>
     );
@@ -72,7 +74,7 @@ export function RegisterFlow() {
     return (
       <Review
         form={form}
-        admin={wallet}
+        wallet={wallet}
         onBack={() => setStep("details")}
         onConfirm={() => setStep("register")}
       />
@@ -83,7 +85,7 @@ export function RegisterFlow() {
     return (
       <Submit
         form={form}
-        admin={wallet}
+        wallet={wallet}
         onEdit={() => setStep("details")}
         onRestart={() => {
           setForm(emptyForm());
@@ -108,7 +110,7 @@ export function RegisterFlow() {
         form={form}
         setForm={setForm}
         errors={showErrors ? errors : {}}
-        admin={wallet}
+        wallet={wallet}
       />
       <div className="flex flex-wrap items-center gap-4">
         <Button type="submit" variant="primary">
@@ -133,12 +135,12 @@ function Details({
   form,
   setForm,
   errors,
-  admin,
+  wallet,
 }: {
   form: RegisterForm;
   setForm: (update: (f: RegisterForm) => RegisterForm) => void;
   errors: FormErrors;
-  admin: string;
+  wallet: string;
 }) {
   const mock = useMockControls();
   const [creating, setCreating] = useState(false);
@@ -199,11 +201,16 @@ function Details({
                 : "Your wallet must be this program's upgrade authority."
             }
           />
-          <p className="text-body text-ink-secondary">
-            Admin: your connected wallet,{" "}
-            <span className="text-ink">{shortAddress(admin)}</span>. The admin
-            proposes changes, lifts pauses and rejects holds.
-          </p>
+          <Input
+            label="Admin"
+            value={form.admin}
+            onChange={(e) => set({ admin: e.target.value })}
+            placeholder={`${shortAddress(wallet)} (your wallet)`}
+            spellCheck={false}
+            autoComplete="off"
+            error={errors.admin}
+            hint="Proposes changes, lifts pauses and rejects holds. Leave empty for your wallet, or enter another address such as a Squads multisig vault."
+          />
         </div>
       </Panel>
 
@@ -561,16 +568,17 @@ function limiterSummary(l: LimiterForm): string {
 
 function Review({
   form,
-  admin,
+  wallet,
   onBack,
   onConfirm,
 }: {
   form: RegisterForm;
-  admin: string;
+  wallet: string;
   onBack: () => void;
   onConfirm: () => void;
 }) {
   const guardians = form.guardians.filter((g) => g.trim());
+  const admin = adminOf(form, wallet);
   return (
     <div className="flex flex-col gap-6">
       <Panel
@@ -579,7 +587,10 @@ function Review({
       >
         <dl className="text-body">
           <Row label="Protocol">{form.program}</Row>
-          <Row label="Admin">{admin} (your wallet)</Row>
+          <Row label="Admin">
+            {admin}
+            {admin === wallet ? " (your wallet)" : ""}
+          </Row>
           <Row label="Guardians">
             {guardians.map((g) => (
               <span key={g} className="block">
@@ -606,16 +617,27 @@ function Review({
       </Panel>
       <Panel
         title="What you'll sign"
-        description={`${1 + form.limiters.length} transactions, one after the other.`}
+        description={
+          admin === wallet
+            ? `${1 + form.limiters.length} transactions, one after the other.`
+            : "One transaction. The token limits are the admin's to set up."
+        }
       >
         <ol className="flex list-decimal flex-col gap-1 pl-5 text-body">
           <li>Register the protocol and its guardians.</li>
-          {form.limiters.map((l, i) => (
-            <li key={l.id}>
-              Set up the {l.symbol.trim() || `token ${i + 1}`} limiter.
-            </li>
-          ))}
+          {admin === wallet &&
+            form.limiters.map((l, i) => (
+              <li key={l.id}>
+                Set up the {l.symbol.trim() || `token ${i + 1}`} limiter.
+              </li>
+            ))}
         </ol>
+        {admin !== wallet && (
+          <p className="mt-3 text-body text-ink-secondary">
+            Only the admin can set up a limiter, so {shortAddress(admin)} signs
+            those itself after registration, with the settings above.
+          </p>
+        )}
       </Panel>
       <div className="flex flex-wrap gap-3">
         <Button
@@ -646,7 +668,9 @@ function explain(error: unknown, isLimiter: boolean): string {
   if (!isClientError(error)) return "Something went wrong. Try again.";
   switch (error.errorName) {
     case "Unauthorized":
-      return "Your wallet must be both the admin and the program's upgrade authority.";
+      return isLimiter
+        ? "Only the admin can set up a limiter."
+        : "Your wallet must be the program's upgrade authority.";
     case "AccountAlreadyInUse":
       return isLimiter
         ? "This token already has a limiter."
@@ -668,19 +692,21 @@ function explain(error: unknown, isLimiter: boolean): string {
 
 function Submit({
   form,
-  admin,
+  wallet,
   onEdit,
   onRestart,
 }: {
   form: RegisterForm;
-  admin: string;
+  wallet: string;
   onEdit: () => void;
   onRestart: () => void;
 }) {
   const toast = useToast();
+  // Only the admin can set up limiters; another admin signs them itself.
+  const selfAdmin = adminOf(form, wallet) === wallet;
   const labels = [
     "Register the protocol",
-    ...form.limiters.map(
+    ...(selfAdmin ? form.limiters : []).map(
       (l, i) => `Set up the ${l.symbol.trim() || `token ${i + 1}`} limiter`,
     ),
   ];
@@ -705,8 +731,9 @@ function Submit({
       try {
         let signature: string;
         if (i === 0) {
-          signature = (await client.initializeConfig(toConfigArgs(form, admin)))
-            .signature;
+          signature = (
+            await client.initializeConfig(toConfigArgs(form, wallet))
+          ).signature;
           configAddress =
             (await client.getConfig(form.program.trim()))?.address ?? null;
           setConfig(configAddress);

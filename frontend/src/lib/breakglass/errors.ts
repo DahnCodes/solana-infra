@@ -33,6 +33,11 @@ export const BREAKGLASS_ERRORS = {
   InvalidLimiterConfig: 6023,
   WrongVault: 6024,
   WrongHold: 6025,
+  NotTightening: 6026,
+  DuplicateGuardian: 6027,
+  ChangeClosed: 6028,
+  WrongChangeAccounts: 6029,
+  InvalidPolicy: 6030,
 } as const;
 
 export type BreakglassErrorName = keyof typeof BREAKGLASS_ERRORS;

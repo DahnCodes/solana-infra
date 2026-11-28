@@ -11,6 +11,7 @@ import {
   canPropose,
   canProposeRelease,
   canRemoveGuardian,
+  canTighten,
   canReject,
   canRenew,
   canUnpause,
@@ -39,10 +40,12 @@ const change = (over: Partial<PendingConfig> = {}): PendingConfig => ({
   config: "c",
   id: BigInt(0),
   action: { kind: "setAdmin", admin: "x" },
+  proposedBy: "a",
   proposedAt: 0,
   executableAt: 100,
   vetoed: false,
   executed: false,
+  cancelled: false,
   ...over,
 });
 
@@ -96,8 +99,31 @@ describe("permissions", () => {
       canExecute("anyone", change({ vetoed: true }), 200).allowed,
       false,
     );
+    assert.equal(
+      canExecute("anyone", change({ cancelled: true }), 200).allowed,
+      false,
+    );
     assert.equal(canVeto("guardian", change()).allowed, true);
     assert.equal(canVeto("admin", change()).allowed, false);
+  });
+
+  it("allows a veto until execution and a cancel after a veto", () => {
+    // Past the timelock but not yet executed: still vetoable.
+    assert.equal(
+      canVeto("guardian", change({ executableAt: 0 })).allowed,
+      true,
+    );
+    assert.equal(canVeto("guardian", change({ vetoed: true })).allowed, false);
+    assert.equal(
+      canVeto("guardian", change({ cancelled: true })).allowed,
+      false,
+    );
+    assert.equal(canCancel("admin", change({ vetoed: true })).allowed, true);
+    assert.equal(
+      canCancel("admin", change({ cancelled: true })).allowed,
+      false,
+    );
+    assert.equal(canCancel("admin", change({ executed: true })).allowed, false);
   });
 });
 
@@ -114,6 +140,7 @@ describe("role matrix", () => {
         cancel: canCancel(role, change()).allowed,
         remove: canRemoveGuardian(role).allowed,
         propose: canPropose(role).allowed,
+        tighten: canTighten(role).allowed,
       }),
     );
     assert.deepEqual(matrix, [
@@ -126,6 +153,7 @@ describe("role matrix", () => {
         cancel: true,
         remove: true,
         propose: true,
+        tighten: true,
       },
       {
         role: "guardian",
@@ -136,6 +164,7 @@ describe("role matrix", () => {
         cancel: false,
         remove: false,
         propose: false,
+        tighten: false,
       },
       {
         role: "user",
@@ -146,6 +175,7 @@ describe("role matrix", () => {
         cancel: false,
         remove: false,
         propose: false,
+        tighten: false,
       },
       {
         role: null,
@@ -156,6 +186,7 @@ describe("role matrix", () => {
         cancel: false,
         remove: false,
         propose: false,
+        tighten: false,
       },
     ]);
     // Anyone with a wallet can execute a change once its timelock ends.

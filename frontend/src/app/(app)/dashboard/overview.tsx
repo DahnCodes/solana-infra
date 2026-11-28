@@ -529,7 +529,7 @@ function Stat({ label, value }: { label: string; value: number }) {
 function ChangesCard({ config, now }: { config: Address; now: number }) {
   const changes = usePendingChanges(config);
   const waiting = (changes.data ?? []).filter(
-    (c) => !c.account.executed && !c.account.vetoed,
+    (c) => !c.account.executed && !c.account.vetoed && !c.account.cancelled,
   );
   return (
     <Panel

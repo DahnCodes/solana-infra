@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `Checkpoint A notes`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `A Align with backend phases 4 to 6`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -122,7 +122,11 @@ src/
 - **5.2** done: each write shows one toast that changes in place: pending (spinner, "Waiting for the network to confirm…", stays up), then confirmed (the outcome plus `TxLink`) or failed (the reason in words, "Nothing changed."). `TxLink` opens Solana Explorer in live mode (`src/lib/explorer.ts`, tested: devnet, mainnet, localnet via custom URL); in mock mode it shows the short signature marked "mock, not on chain" because mock signatures aren't on any explorer. `ToastProvider` gained `update`, `dismiss` and `persist`.
 - **5.3** done: every panel has loading, empty and error states. `useClientQuery` returns `retry`; `src/components/query-state.tsx` has `Skeleton`, `ErrorNote` (what failed, why, Try again), `QueryStatus` (skeleton, error, or "showing the last known data" note; pair with `query.data !== undefined && …`) and `QueryView`. `useChainClock()` exposes the clock read's error. Rule: an unread value is never shown as a default (no "Open" scopes, "0" balances or "first withdrawal" flags without data). `MockClient.setOutage(on)` makes every read fail; the sidebar's demo box has "Simulate an RPC outage" to show it.
 
+- **Phase 4 to 6 alignment** done (Nov 28, before checkpoint A is confirmed; the backend wasn't running, so this follows the published contract at `ec4ce46`): `rules/config.ts` ports `config_logic.rs` (`validateLimiterParams`, `isTightening`, `applyParams` with window folding, `validatePolicy`, `validateAction`, `requireExecutable`; tested). The mock now matches the program: `initializeConfig` is signed by the upgrade authority and the admin is any address; `proposeConfig` validates and records `proposedBy`; execute re-validates and checks closed → vetoed → timelock; `releaseHeld` emits `holdResolved` before `configChangeExecuted`; `changePolicy` also sets the always-open scopes and timelock; veto works until execution; cancel keeps the account (`cancelled`), works after a veto and emits `configChangeCancelled`; new `tightenLimits` (`LimitsTightened`, `NotTightening`). UI: `/rules` has a Token limits card with Tighten (all nine settings, says which ones loosen), the Propose dialog edits all nine limiter settings and the policy's always-open scopes and timelock, and changes show Cancelled and who proposed them. The register form has an Admin field (empty = this wallet; another admin signs the limiters itself). Monitor mock uses Rust struct names for `Event.kind` and the backend's detector names. Shared form: `src/app/(app)/rules/limits-model.ts` (tested).
+
 ### Checkpoint A (reached Nov 28; waiting for the human to confirm)
+
+The differences below are now handled in mock mode (see "Phase 4 to 6 alignment" above). What still waits for the human: confirming checkpoint A, and the open questions at the end.
 
 The backend branch moved from `e52f9cd` (Phase 3, what the frontend was built against) to `ec4ce46` (Phases 4 timelocks, 5 monitor, 6 guardian bot). `clients/ts/idl` now covers every Breakglass instruction the frontend needs. After the human confirms checkpoint A, align the frontend with it (do this in 5.4 or a short type-refresh step first):
 

@@ -15,13 +15,14 @@ import type {
   FlowLimiter,
   GuardianLedger,
   HoldKind,
+  LimiterParams,
   PauseState,
   PendingConfig,
   PendingWithdrawal,
   Position,
   ProtocolConfig,
 } from "../accounts.ts";
-import { WINDOW_BUCKETS } from "../accounts.ts";
+import { limiterParams, WINDOW_BUCKETS } from "../accounts.ts";
 import type {
   ClaimResult,
   InitFlowLimiterArgs,
@@ -43,7 +44,12 @@ import type {
   BreakglassEventRecord,
   EventDataByName,
 } from "../events.ts";
-import type { Incident, IncidentDetail, Severity } from "../monitor.ts";
+import {
+  monitorEventKind,
+  type Incident,
+  type IncidentDetail,
+  type Severity,
+} from "../monitor.ts";
 import type {
   Address,
   ScopeMask,
@@ -68,6 +74,14 @@ import {
   windowTotal,
   effectiveCap,
 } from "../rules/limiter.ts";
+import {
+  applyParams,
+  DEFAULT_PUBKEY,
+  isTightening,
+  requireExecutable,
+  validateAction,
+  validateLimiterParams,
+} from "../rules/config.ts";
 import { mockAddress, mockSignature, randomU64 } from "./address.ts";
 
 /** An error from the protected protocol or the token program, not Breakglass. */
@@ -247,8 +261,10 @@ export class MockEngine {
         args.protectedProgram === this.testVault.program
           ? this.testVault.upgradeAuthority
           : (this.programAuthorities.get(args.protectedProgram) ?? null);
-      require(ctx.signer === authority &&
-        ctx.signer === args.admin, "Unauthorized");
+      // The upgrade authority signs; the admin is just an address (it can
+      // be a Squads vault), but never the default key.
+      require(ctx.signer === authority, "Unauthorized");
+      require(args.admin !== DEFAULT_PUBKEY, "Unauthorized");
       require(args.guardians.length <= MAX_GUARDIANS, "TooManyGuardians");
       const timelock = args.timelockSecs ?? DEFAULTS.timelockSecs;
       require(timelock >= DEFAULTS.minTimelockSecs &&
@@ -319,7 +335,7 @@ export class MockEngine {
         instantAllowance: args.instantAllowance ?? U64_MAX,
         screenSecs: args.screenSecs ?? DEFAULTS.screenSecs,
       };
-      validateLimiter(limiter);
+      validateLimiterParams(limiterParams(limiter));
       require((scopeMask(args.scope) & config.unpausableMask) ===
         ZERO, "ScopeUnpausable");
       roll(limiter, ctx.now);
@@ -587,20 +603,40 @@ export class MockEngine {
     ];
   }
 
-  // Breakglass: timelocked changes (backend phase 4, provisional) --------------------
+  // Breakglass: limits and timelocked changes (backend phase 4) --------------------
+
+  /** Admin tightens a limiter at once; any loosening field fails. */
+  tightenLimits(
+    ctx: Ctx,
+    configAddr: Address,
+    mint: Address,
+    params: LimiterParams,
+  ): TxResult {
+    return this.atomic(() => {
+      const config = this.config(configAddr);
+      require(ctx.signer === config.admin, "Unauthorized");
+      const found = this.limiterFor(configAddr, (l) => l.mint === mint);
+      if (!found) throw new RuleError("WrongChangeAccounts");
+      validateLimiterParams(params);
+      require(isTightening(
+        limiterParams(found.limiter),
+        params,
+      ), "NotTightening");
+      applyParams(found.limiter, params, ctx.now);
+      return this.commit(ctx, [
+        {
+          name: "limitsTightened",
+          data: { config: configAddr, flowLimiter: found.address, mint },
+        },
+      ]);
+    });
+  }
 
   proposeConfig(ctx: Ctx, configAddr: Address, action: ConfigAction): TxResult {
     return this.atomic(() => {
       const config = this.config(configAddr);
       require(ctx.signer === config.admin, "Unauthorized");
-      if (action.kind === "releaseHeld") {
-        const hold = this.hold(configAddr, action.hold);
-        require(hold.status === "queued" ||
-          hold.status === "frozen", "HoldInvalidState");
-      }
-      if (action.kind === "addGuardian") {
-        require(config.guardians.length < MAX_GUARDIANS, "TooManyGuardians");
-      }
+      validateAction(config, action);
       const id = config.nextChangeId;
       config.nextChangeId = id + BigInt(1);
       const address = mockAddress(`cfgchg:${configAddr}:${id}`);
@@ -610,10 +646,12 @@ export class MockEngine {
         config: configAddr,
         id,
         action: structuredClone(action),
+        proposedBy: ctx.signer,
         proposedAt: ctx.now,
         executableAt,
         vetoed: false,
         executed: false,
+        cancelled: false,
       });
       return this.commit(ctx, [
         {
@@ -641,41 +679,35 @@ export class MockEngine {
     return change;
   }
 
+  /** Anyone, after the timelock. The action is validated again first. */
   executeConfig(ctx: Ctx, configAddr: Address, changeAddr: Address): TxResult {
     return this.atomic(() => {
       const config = this.config(configAddr);
       const change = this.change(configAddr, changeAddr);
-      require(!change.executed, "NotExecutable");
-      require(!change.vetoed, "Vetoed");
-      require(ctx.now >= change.executableAt, "TimelockActive");
-      const events: BreakglassEvent[] = [];
+      requireExecutable(change, ctx.now);
       const action = change.action;
+      validateAction(config, action);
+      const events: BreakglassEvent[] = [];
       switch (action.kind) {
         case "raiseLimits": {
           const found = this.limiterFor(
             configAddr,
             (l) => l.mint === action.mint,
           );
-          if (!found) throw new RuleError("InvalidLimiterConfig");
-          Object.assign(found.limiter, {
-            capAbsolute: action.capAbsolute,
-            capBpsOfVault: action.capBpsOfVault,
-            largeThreshold: action.largeThreshold,
-            largeThresholdBps: action.largeThresholdBps,
-          });
-          validateLimiter(found.limiter);
+          if (!found) throw new RuleError("WrongChangeAccounts");
+          applyParams(found.limiter, action.params, ctx.now);
           break;
         }
         case "addGuardian":
-          require(config.guardians.length < MAX_GUARDIANS, "TooManyGuardians");
-          if (!config.guardians.includes(action.guardian))
-            config.guardians.push(action.guardian);
+          config.guardians.push(action.guardian);
           break;
         case "setAdmin":
           config.admin = action.admin;
           break;
         case "releaseHeld": {
-          const hold = this.hold(configAddr, action.hold);
+          const hold = this.holds.get(action.hold);
+          if (!hold || hold.config !== configAddr)
+            throw new RuleError("WrongChangeAccounts");
           require(hold.status === "queued" ||
             hold.status === "frozen", "HoldInvalidState");
           hold.status = "released";
@@ -687,25 +719,29 @@ export class MockEngine {
         }
         case "changePolicy":
           config.policy = { ...action.policy };
+          config.unpausableMask = action.unpausableMask;
+          config.timelockSecs = action.timelockSecs;
           break;
       }
       change.executed = true;
       return this.commit(ctx, [
+        ...events,
         {
           name: "configChangeExecuted",
           data: { config: configAddr, change: changeAddr },
         },
-        ...events,
       ]);
     });
   }
 
+  /** Guardian only. Allowed until the change is executed or cancelled. */
   vetoConfig(ctx: Ctx, configAddr: Address, changeAddr: Address): TxResult {
     return this.atomic(() => {
       const config = this.config(configAddr);
-      require(roleOf(config, ctx.signer) === "guardian", "Unauthorized");
+      require(config.guardians.includes(ctx.signer), "Unauthorized");
       const change = this.change(configAddr, changeAddr);
-      require(!change.executed && !change.vetoed, "NotExecutable");
+      require(!change.executed && !change.cancelled, "ChangeClosed");
+      require(!change.vetoed, "Vetoed");
       change.vetoed = true;
       return this.commit(ctx, [
         {
@@ -716,15 +752,20 @@ export class MockEngine {
     });
   }
 
-  /** Admin withdraws its own proposal; the account closes. */
+  /** Admin withdraws a change (also after a veto); the account stays. */
   cancelConfig(ctx: Ctx, configAddr: Address, changeAddr: Address): TxResult {
     return this.atomic(() => {
       const config = this.config(configAddr);
       require(ctx.signer === config.admin, "Unauthorized");
       const change = this.change(configAddr, changeAddr);
-      require(!change.executed, "NotExecutable");
-      this.changes.delete(changeAddr);
-      return this.commit(ctx, []);
+      require(!change.executed && !change.cancelled, "ChangeClosed");
+      change.cancelled = true;
+      return this.commit(ctx, [
+        {
+          name: "configChangeCancelled",
+          data: { config: configAddr, change: changeAddr },
+        },
+      ]);
     });
   }
 
@@ -927,7 +968,7 @@ export class MockEngine {
         ...incident,
         events: events.map((event, i) => ({
           id: `${signature}:${i}`,
-          kind: event.name,
+          kind: monitorEventKind(event.name),
           signature,
           slot: this.slot,
           block_time: incident.opened_at,
@@ -947,35 +988,24 @@ export class MockEngine {
       switch (event.name) {
         case "limitTripped":
           open(
-            "limit-trip",
+            "pause_trip",
             "critical",
             "Withdrawal cap hit: withdrawals auto-paused",
           );
           break;
         case "largeWithdrawalQueued":
-          open("large-withdrawal", "warning", "Large withdrawal held");
+          open("large_withdrawal", "high", "Large withdrawal held");
           break;
         case "paused":
           if (event.data.kind === 0)
-            open("guardian-pause", "high", "Guardian paused a scope");
+            open("pause_trip", "high", "Guardian paused a scope");
           break;
         case "configChangeProposed":
-          open("config-change", "high", "Config change proposed");
+          open("config_change", "high", "Config change proposed");
           break;
       }
     }
   }
-}
-
-/** Limiter parameter checks (validate_params in limiter.rs). */
-function validateLimiter(l: FlowLimiter) {
-  require(l.windowSecs >= WINDOW_BUCKETS &&
-    l.capAbsolute > ZERO &&
-    l.capBpsOfVault <= 10_000 &&
-    l.largeThresholdBps <= 10_000 &&
-    l.holdSecs > 0 &&
-    l.autoTripSecs > 0 &&
-    l.screenSecs > 0, "InvalidLimiterConfig");
 }
 
 /** Event fields as the monitor's JSON carries them: u64 as decimal strings. */

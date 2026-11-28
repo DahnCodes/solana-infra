@@ -162,40 +162,83 @@ export type PendingWithdrawal = {
   kind: HoldKind;
 };
 
-// PendingConfig (planned, backend phase 4) -------------------------------------
+// PendingConfig (backend phase 4) ----------------------------------------------
 
 /**
- * A loosening change waiting out the timelock. PROVISIONAL: FRONTEND.md
- * names these five actions for phase 4 but not their fields. The fields
- * below are our reading of the spec; replace them with the IDL's when
- * phase 4 lands (checkpoint A).
+ * A limiter's settings without `scope` and `vault`, which never change.
+ * Used by raiseLimits (timelocked) and tighten_limits (immediate). Start
+ * from the current limiter and change what you need.
  */
+export type LimiterParams = {
+  windowSecs: Seconds;
+  capAbsolute: U64;
+  capBpsOfVault: Bps;
+  largeThreshold: U64;
+  largeThresholdBps: Bps;
+  holdSecs: Seconds;
+  autoTripSecs: Seconds;
+  instantAllowance: U64;
+  screenSecs: Seconds;
+};
+
+/** The limiter settings a FlowLimiter currently has. */
+export function limiterParams(l: FlowLimiter): LimiterParams {
+  return {
+    windowSecs: l.windowSecs,
+    capAbsolute: l.capAbsolute,
+    capBpsOfVault: l.capBpsOfVault,
+    largeThreshold: l.largeThreshold,
+    largeThresholdBps: l.largeThresholdBps,
+    holdSecs: l.holdSecs,
+    autoTripSecs: l.autoTripSecs,
+    instantAllowance: l.instantAllowance,
+    screenSecs: l.screenSecs,
+  };
+}
+
+/** A timelocked change (IDL `ConfigAction`, a one-key Anchor enum). */
 export type ConfigAction =
-  | {
-      kind: "raiseLimits";
-      mint: Address;
-      capAbsolute: U64;
-      capBpsOfVault: Bps;
-      largeThreshold: U64;
-      largeThresholdBps: Bps;
-    }
+  | { kind: "raiseLimits"; mint: Address; params: LimiterParams }
   | { kind: "addGuardian"; guardian: Address }
   | { kind: "setAdmin"; admin: Address }
   | { kind: "releaseHeld"; hold: Address }
-  | { kind: "changePolicy"; policy: PausePolicy };
+  | {
+      kind: "changePolicy";
+      policy: PausePolicy;
+      unpausableMask: ScopeMask;
+      timelockSecs: Seconds;
+    };
 
-/** Seeds: ["cfgchg", config, id]. Planned for backend phase 4. */
+/**
+ * Seeds: ["cfgchg", config, id]. State, in order: cancelled; executed
+ * (done); vetoed (can never run); now < executableAt (waiting, guardians
+ * can veto); otherwise ready for anyone to execute.
+ */
 export type PendingConfig = {
   bump: number;
   config: Address;
   id: U64;
   action: ConfigAction;
+  proposedBy: Address;
   proposedAt: UnixSeconds;
   /** Anyone can execute it from this time on, unless vetoed. */
   executableAt: UnixSeconds;
   vetoed: boolean;
   executed: boolean;
+  /** The admin withdrew it; the account stays, for history. */
+  cancelled: boolean;
 };
+
+export type ChangeState =
+  "cancelled" | "executed" | "vetoed" | "waiting" | "ready";
+
+/** Where a change stands at `now`, in the order FRONTEND.md gives. */
+export function changeState(c: PendingConfig, now: UnixSeconds): ChangeState {
+  if (c.cancelled) return "cancelled";
+  if (c.executed) return "executed";
+  if (c.vetoed) return "vetoed";
+  return now < c.executableAt ? "waiting" : "ready";
+}
 
 // test_vault (the demo protected protocol) -------------------------------------
 

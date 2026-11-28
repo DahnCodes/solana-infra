@@ -15,6 +15,7 @@ import type {
   FlowLimiter,
   GuardianLedger,
   HoldStatus,
+  LimiterParams,
   PauseState,
   PendingConfig,
   PendingWithdrawal,
@@ -188,7 +189,11 @@ export interface BreakglassClient {
 
   // Writes: Breakglass -----------------------------------------------------------
 
-  /** Register a protocol. Signed by the admin and the program's upgrade authority. */
+  /**
+   * Register a protocol. Signed by the protected program's upgrade
+   * authority (and the payer); the admin is just an address, so it can be a
+   * Squads vault.
+   */
   initializeConfig(args: InitializeConfigArgs): Promise<TxResult>;
 
   /** Guardian or admin pauses scopes (guardian within duration, cooldown, budget). */
@@ -206,6 +211,14 @@ export interface BreakglassClient {
   /** Admin sets up the limiter for one mint. */
   initFlowLimiter(args: InitFlowLimiterArgs): Promise<TxResult>;
 
+  /**
+   * Admin tightens a limiter at once (no timelock). Every field must be
+   * equal or stricter, else NotTightening: propose a raiseLimits instead.
+   */
+  tightenLimits(
+    args: OnConfig & { mint: Address; params: LimiterParams },
+  ): Promise<TxResult>;
+
   /** Guardian or admin freezes a queued hold. */
   freezeHeld(args: HoldArgs): Promise<TxResult>;
 
@@ -215,7 +228,11 @@ export interface BreakglassClient {
   /** The hold's owner claims it through the protocol after releaseAt. */
   claimHeld(args: HoldArgs): Promise<ClaimResult>;
 
-  /** Admin releases a frozen hold, through the timelock (backend phase 4). */
+  /**
+   * Admin releases a frozen hold through the timelock. There is no
+   * release_held instruction: this proposes a releaseHeld change, which
+   * anyone executes after the timelock.
+   */
   releaseHeld(args: HoldArgs): Promise<TxResult>;
 
   /** Admin proposes a loosening change; it waits out the timelock. */
@@ -227,7 +244,7 @@ export interface BreakglassClient {
   /** Guardian vetoes a pending change. */
   vetoConfig(args: ChangeArgs): Promise<TxResult>;
 
-  /** Admin cancels its own pending change. */
+  /** Admin cancels a pending change (also after a veto). */
   cancelConfig(args: ChangeArgs): Promise<TxResult>;
 
   // Writes: the protected test vault ----------------------------------------------

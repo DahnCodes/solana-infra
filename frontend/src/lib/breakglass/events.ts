@@ -142,6 +142,17 @@ export type EventDataByName = {
     change: Address;
     by: Address;
   };
+  /** The admin withdrew its proposed change. */
+  configChangeCancelled: {
+    config: Address;
+    change: Address;
+  };
+  /** The admin tightened a limiter at once (no timelock). */
+  limitsTightened: {
+    config: Address;
+    flowLimiter: Address;
+    mint: Address;
+  };
 };
 
 export type BreakglassEventName = keyof EventDataByName;

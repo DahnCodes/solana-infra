@@ -34,6 +34,11 @@ export const BREAKGLASS_MESSAGES: Record<BreakglassErrorName, string> = {
   InvalidLimiterConfig: "Limiter settings out of range.",
   WrongVault: "Wrong vault account for this limiter.",
   WrongHold: "Wrong held-withdrawal account.",
+  NotTightening: "This loosens a limit: propose it through the timelock.",
+  DuplicateGuardian: "Already a guardian.",
+  ChangeClosed: "That change was already executed or cancelled.",
+  WrongChangeAccounts: "Wrong or missing limiter or hold for this change.",
+  InvalidPolicy: "Pause policy values out of range.",
 };
 
 /** Errors from outside Breakglass: the protected protocol, tokens, wallet. */

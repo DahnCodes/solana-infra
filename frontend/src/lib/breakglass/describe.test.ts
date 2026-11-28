@@ -23,14 +23,21 @@ describe("plain-words descriptions", () => {
         {
           kind: "raiseLimits",
           mint: "m",
-          capAbsolute: BigInt(250_000_000_000),
-          capBpsOfVault: 1500,
-          largeThreshold: BigInt(0),
-          largeThresholdBps: 0,
+          params: {
+            windowSecs: 3600,
+            capAbsolute: BigInt(250_000_000_000),
+            capBpsOfVault: 1500,
+            largeThreshold: BigInt(100_000_000_000),
+            largeThresholdBps: 0,
+            holdSecs: 6 * 3600,
+            autoTripSecs: 3600,
+            instantAllowance: BigInt(0),
+            screenSecs: 120,
+          },
         },
         token,
       ),
-      "Raise the USDC cap to 250,000 USDC (or 15% of the vault) per window",
+      "Set the USDC limits: cap 250,000 USDC (or 15% of the vault) per 1 h 00 min, holds from 100,000 USDC for 6 h 00 min",
     );
     assert.equal(
       describeAction(
@@ -95,6 +102,23 @@ describe("plain-words descriptions", () => {
         ctx,
       ),
       "The 250,000 USDC withdrawal to Ada was rejected; the funds went back to the position",
+    );
+    assert.equal(
+      describeEvent(
+        {
+          name: "limitsTightened",
+          data: { config: "c", flowLimiter: "f", mint: "m" },
+        },
+        ctx,
+      ),
+      "Tightened the USDC limits, effective at once",
+    );
+    assert.equal(
+      describeEvent(
+        { name: "configChangeCancelled", data: { config: "c", change: "x" } },
+        ctx,
+      ),
+      "Cancelled a config change",
     );
   });
 

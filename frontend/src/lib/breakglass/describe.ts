@@ -42,11 +42,12 @@ export function describeAction(
   switch (action.kind) {
     case "raiseLimits": {
       const t = token(action.mint);
+      const p = action.params;
       const amount = (v: bigint) => `${formatUnits(v, t.decimals)} ${t.symbol}`;
-      const cap = action.capBpsOfVault
-        ? `${amount(action.capAbsolute)} (or ${percent(action.capBpsOfVault)} of the vault)`
-        : amount(action.capAbsolute);
-      return `Raise the ${t.symbol} cap to ${cap} per window`;
+      const cap = p.capBpsOfVault
+        ? `${amount(p.capAbsolute)} (or ${percent(p.capBpsOfVault)} of the vault)`
+        : amount(p.capAbsolute);
+      return `Set the ${t.symbol} limits: cap ${cap} per ${formatSpan(p.windowSecs)}, holds from ${amount(p.largeThreshold)} for ${formatSpan(p.holdSecs)}`;
     }
     case "addGuardian":
       return `Add ${short(action.guardian)} as a guardian`;
@@ -55,7 +56,7 @@ export function describeAction(
     case "releaseHeld":
       return `Release the frozen withdrawal ${short(action.hold)}`;
     case "changePolicy":
-      return "Change the guardian pause limits";
+      return `Change the guardian pause limits and set the timelock to ${formatSpan(action.timelockSecs)}`;
   }
 }
 
@@ -173,6 +174,12 @@ export function describeEvent(
       return "Executed a config change";
     case "configChangeVetoed":
       return "Vetoed a config change";
+    case "configChangeCancelled":
+      return "Cancelled a config change";
+    case "limitsTightened": {
+      const e = d as EventDataByName["limitsTightened"];
+      return `Tightened the ${ctx.token(e.mint).symbol} limits, effective at once`;
+    }
   }
 }
 

@@ -54,6 +54,8 @@ const GROUP_OF: Record<BreakglassEventName, Exclude<Group, "all">> = {
   configChangeProposed: "config",
   configChangeExecuted: "config",
   configChangeVetoed: "config",
+  configChangeCancelled: "config",
+  limitsTightened: "config",
 };
 
 const ICON: Record<BreakglassEventName, LucideIcon> = {
@@ -72,6 +74,8 @@ const ICON: Record<BreakglassEventName, LucideIcon> = {
   configChangeProposed: Settings2,
   configChangeExecuted: Settings2,
   configChangeVetoed: Settings2,
+  configChangeCancelled: Settings2,
+  limitsTightened: Settings2,
 };
 
 const GROUPS: { id: Group; label: string }[] = [

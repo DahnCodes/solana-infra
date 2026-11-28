@@ -11,6 +11,7 @@ import type {
   PendingWithdrawal,
   ProtocolConfig,
 } from "./accounts.ts";
+import { changeState } from "./accounts.ts";
 import { RuleError } from "./errors.ts";
 import { BREAKGLASS_MESSAGES } from "./messages.ts";
 import type { Address, ScopeMask, Seconds, UnixSeconds } from "./primitives.ts";
@@ -181,6 +182,15 @@ export function canPropose(role: Role | null): Permission {
   return yes;
 }
 
+// Limits ---------------------------------------------------------------------------
+
+/** Tightening applies at once; only the admin may do it. */
+export function canTighten(role: Role | null): Permission {
+  if (!role) return no(NO_WALLET);
+  if (role !== "admin") return no("Only the admin can tighten limits.");
+  return yes;
+}
+
 // Timelocked changes -------------------------------------------------------------
 
 export function canExecute(
@@ -189,19 +199,30 @@ export function canExecute(
   now: UnixSeconds,
 ): Permission {
   if (!wallet) return no(NO_WALLET);
-  if (change.executed) return no("Already done.");
-  if (change.vetoed) return no("Vetoed by the guardian.");
-  if (now < change.executableAt) return no("Still in the timelock.");
-  return yes;
+  switch (changeState(change, now)) {
+    case "cancelled":
+      return no("Cancelled by the admin.");
+    case "executed":
+      return no("Already done.");
+    case "vetoed":
+      return no("Vetoed by the guardian.");
+    case "waiting":
+      return no("Still in the timelock.");
+    case "ready":
+      return yes;
+  }
 }
 
+/** A guardian can veto until the change runs, even after the timelock. */
 export function canVeto(role: Role | null, change: PendingConfig): Permission {
   if (!role) return no(NO_WALLET);
   if (role !== "guardian") return no("Only a guardian can veto.");
-  if (change.executed || change.vetoed) return no("This change is settled.");
+  if (change.executed || change.cancelled) return no("This change is settled.");
+  if (change.vetoed) return no("Already vetoed.");
   return yes;
 }
 
+/** The admin can cancel until the change runs, also after a veto. */
 export function canCancel(
   role: Role | null,
   change: PendingConfig,
@@ -209,5 +230,6 @@ export function canCancel(
   if (!role) return no(NO_WALLET);
   if (role !== "admin") return no("Only the admin can cancel its change.");
   if (change.executed) return no("Already done.");
+  if (change.cancelled) return no("Already cancelled.");
   return yes;
 }

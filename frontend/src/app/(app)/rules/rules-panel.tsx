@@ -1,6 +1,6 @@
 "use client";
 
-import { Pause, Play, Plus, RotateCw, ShieldOff } from "lucide-react";
+import { Check, Pause, Play, Plus, RotateCw, ShieldOff } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { ActionButton } from "@/components/action-button";
 import { Badge } from "@/components/badge";
@@ -27,6 +27,7 @@ import {
 import type {
   AccountRecord,
   Address,
+  ChangeState,
   ConfigAction,
   FlowLimiter,
   GuardianLedger,
@@ -34,7 +35,8 @@ import type {
   PendingConfig,
   ProtocolConfig,
 } from "@/lib/breakglass";
-import { scopeMask, scopesInMask } from "@/lib/breakglass/constants";
+import { changeState, limiterParams } from "@/lib/breakglass/accounts";
+import { DEFAULTS, scopeMask, scopesInMask } from "@/lib/breakglass/constants";
 import {
   describeAction,
   formatSpan,
@@ -57,9 +59,17 @@ import {
   runningPauses,
 } from "@/lib/breakglass/rules/pauses";
 import { cx } from "@/lib/cx";
-import { formatDateTime, formatUnits, parseUnits } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { tokenInfo } from "@/lib/tokens";
 import { walletLabel } from "@/lib/wallet-label";
+import { LimitsCard, LimitsFields } from "./limits-card";
+import {
+  draftOf,
+  loosenedSettings,
+  paramsOf,
+  sameParams,
+  type LimitsDraft,
+} from "./limits-model";
 
 const H = 3600;
 
@@ -126,6 +136,7 @@ export function RulesPanel() {
             now={now}
           />
           <GuardiansCard cfg={cfg} config={config} role={role} />
+          <LimitsCard config={config} limiters={limiters.data!} role={role} />
           <ChangesCard
             cfg={cfg}
             config={config}
@@ -520,6 +531,16 @@ function GuardiansCard({
 
 // Changes ------------------------------------------------------------------------
 
+const STATE_BADGE: Record<
+  Exclude<ChangeState, "waiting">,
+  { label: string; status?: "open" | "held" | "tripped" }
+> = {
+  cancelled: { label: "Cancelled" },
+  executed: { label: "Done" },
+  vetoed: { label: "Vetoed", status: "tripped" },
+  ready: { label: "Can be executed", status: "open" },
+};
+
 function ChangesCard({
   cfg,
   config,
@@ -546,7 +567,7 @@ function ChangesCard({
   return (
     <Panel
       title="Config changes"
-      description={`Each waits ${formatSpan(cfg.timelockSecs)} before anyone can execute it.`}
+      description={`Each waits ${formatSpan(cfg.timelockSecs)} before anyone can execute it. A guardian can veto it until it runs.`}
       actions={
         canPropose(role).allowed && (
           <Button
@@ -568,61 +589,77 @@ function ChangesCard({
         <ul className="flex flex-col divide-y divide-line">
           {changes.map((c) => {
             const a = c.account;
+            const state = changeState(a, now);
             const args = { config, change: c.address };
+            const what = describeAction(a.action, tokenInfo);
+            const settled = state === "cancelled" || state === "executed";
             return (
               <li key={c.address} className="flex flex-col gap-2 py-3">
-                <span className="text-body">
-                  {describeAction(a.action, tokenInfo)}
+                <span
+                  className={cx(
+                    "text-body",
+                    settled && state === "cancelled" && "text-ink-secondary",
+                  )}
+                >
+                  {what}
                 </span>
                 <span className="flex flex-wrap items-center gap-2 text-body text-ink-secondary">
-                  {a.executed ? (
-                    <Badge>Done</Badge>
-                  ) : a.vetoed ? (
-                    <Badge status="tripped">Vetoed</Badge>
-                  ) : now >= a.executableAt ? (
-                    <Badge status="open">Can be executed</Badge>
-                  ) : (
+                  {state === "waiting" ? (
                     <>
                       <Badge status="held">In the timelock</Badge>
                       <Countdown target={a.executableAt} now={now} /> left
                     </>
+                  ) : (
+                    <Badge status={STATE_BADGE[state].status}>
+                      {STATE_BADGE[state].label}
+                    </Badge>
                   )}
-                  <span>Proposed {formatDateTime(a.proposedAt)}</span>
+                  <span>
+                    Proposed {formatDateTime(a.proposedAt)} by{" "}
+                    {walletLabel(a.proposedBy)}
+                  </span>
                 </span>
-                {!a.executed && !a.vetoed && (
+                {!settled && (
                   <div className="flex flex-wrap gap-2">
+                    {state !== "vetoed" && (
+                      <ActionButton
+                        label="Execute"
+                        done="Change executed"
+                        permission={canExecute(wallet, a, now)}
+                        confirm={{
+                          title: "Execute this change?",
+                          summary: `It takes effect now: ${what}.`,
+                          confirmLabel: "Execute change",
+                        }}
+                        run={(cl) => cl.executeConfig(args)}
+                      />
+                    )}
+                    {state !== "vetoed" && (
+                      <ActionButton
+                        label="Veto"
+                        done="Change vetoed"
+                        permission={canVeto(role, a)}
+                        relevant={role === "guardian"}
+                        confirm={{
+                          title: "Veto this change?",
+                          summary: `It can never be executed: ${what}.`,
+                          confirmLabel: "Veto change",
+                        }}
+                        run={(cl) => cl.vetoConfig(args)}
+                      />
+                    )}
                     <ActionButton
-                      label="Execute"
-                      done="Change executed"
-                      permission={canExecute(wallet, a, now)}
-                      confirm={{
-                        title: "Execute this change?",
-                        summary: `It takes effect now: ${describeAction(a.action, tokenInfo)}.`,
-                        confirmLabel: "Execute change",
-                      }}
-                      run={(cl) => cl.executeConfig(args)}
-                    />
-                    <ActionButton
-                      label="Veto"
-                      done="Change vetoed"
-                      permission={canVeto(role, a)}
-                      relevant={role === "guardian"}
-                      confirm={{
-                        title: "Veto this change?",
-                        summary: `It can never be executed: ${describeAction(a.action, tokenInfo)}.`,
-                        confirmLabel: "Veto change",
-                      }}
-                      run={(cl) => cl.vetoConfig(args)}
-                    />
-                    <ActionButton
-                      label="Cancel"
+                      label={state === "vetoed" ? "Close" : "Cancel"}
                       variant="quiet"
                       done="Change cancelled"
                       permission={canCancel(role, a)}
                       relevant={role === "admin"}
                       confirm={{
                         title: "Cancel this change?",
-                        summary: `Your proposal is withdrawn: ${describeAction(a.action, tokenInfo)}.`,
+                        summary:
+                          state === "vetoed"
+                            ? `The vetoed proposal is marked cancelled: ${what}.`
+                            : `Your proposal is withdrawn and can never run: ${what}.`,
                         confirmLabel: "Cancel change",
                       }}
                       run={(cl) => cl.cancelConfig(args)}
@@ -651,17 +688,12 @@ const KINDS: { value: Kind; label: string }[] = [
   { value: "raiseLimits", label: "Change a token's limits" },
   { value: "addGuardian", label: "Add a guardian" },
   { value: "setAdmin", label: "Hand over the admin role" },
-  { value: "changePolicy", label: "Change the guardian pause limits" },
+  { value: "changePolicy", label: "Change the pause policy and timelock" },
 ];
 
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const pct = (bps: number) => String(bps / 100);
-const toBps = (t: string) => {
-  const n = Number(t);
-  return t.trim() !== "" && Number.isFinite(n) && n >= 0 && n <= 100
-    ? Math.round(n * 100)
-    : null;
-};
+/** The scopes the policy form offers, as in the register form. */
+const POLICY_SCOPES = [0, 1, 2, 3, 4, 5, 6, 7];
 const hoursOf = (t: string) => {
   const n = Number(t);
   return t.trim() !== "" && Number.isFinite(n) && n > 0
@@ -683,22 +715,12 @@ function ProposeDialog({
   limiters: AccountRecord<FlowLimiter>[];
 }) {
   const first = limiters[0]?.account;
-  const firstToken = first ? tokenInfo(first.mint) : null;
   const [kind, setKind] = useState<Kind>("raiseLimits");
   const [mint, setMint] = useState(first?.mint ?? "");
-  const [cap, setCap] = useState(
-    first && firstToken
-      ? formatUnits(first.capAbsolute, firstToken.decimals)
-      : "",
-  );
-  const [capPct, setCapPct] = useState(first ? pct(first.capBpsOfVault) : "0");
-  const [threshold, setThreshold] = useState(
-    first && firstToken
-      ? formatUnits(first.largeThreshold, firstToken.decimals)
-      : "",
-  );
-  const [thresholdPct, setThresholdPct] = useState(
-    first ? pct(first.largeThresholdBps) : "0",
+  const limiter = limiters.find((l) => l.account.mint === mint)?.account;
+  const token = tokenInfo(mint);
+  const [draft, setDraft] = useState<LimitsDraft | null>(() =>
+    first ? draftOf(first, tokenInfo(first.mint).decimals) : null,
   );
   const [address, setAddress] = useState("");
   const p = cfg.policy;
@@ -708,32 +730,23 @@ function ProposeDialog({
   const [budget, setBudget] = useState(String(p.budgetSecsPerPeriod / H));
   const [period, setPeriod] = useState(String(p.budgetPeriodSecs / H / 24));
   const [autoTrip, setAutoTrip] = useState(String(p.autoTripSecs / H));
+  const [alwaysOpen, setAlwaysOpen] = useState(() =>
+    scopesInMask(cfg.unpausableMask),
+  );
+  const [timelock, setTimelock] = useState(String(cfg.timelockSecs / H));
 
-  const token = tokenInfo(mint);
+  const parsed = draft ? paramsOf(draft, token.decimals) : null;
+  const limits = parsed && "params" in parsed ? parsed.params : null;
+  const timelockSecs = hoursOf(timelock);
+  const timelockOk =
+    timelockSecs !== null &&
+    timelockSecs >= DEFAULTS.minTimelockSecs &&
+    timelockSecs <= DEFAULTS.maxTimelockSecs;
+
   const action: ConfigAction | null = (() => {
     switch (kind) {
-      case "raiseLimits": {
-        const capUnits = parseUnits(cap, token.decimals);
-        const thrUnits = parseUnits(threshold, token.decimals);
-        const capBps = toBps(capPct);
-        const thrBps = toBps(thresholdPct);
-        if (
-          !mint ||
-          !capUnits ||
-          !thrUnits ||
-          capBps === null ||
-          thrBps === null
-        )
-          return null;
-        return {
-          kind,
-          mint,
-          capAbsolute: capUnits,
-          capBpsOfVault: capBps,
-          largeThreshold: thrUnits,
-          largeThresholdBps: thrBps,
-        };
-      }
+      case "raiseLimits":
+        return mint && limits ? { kind, mint, params: limits } : null;
       case "addGuardian":
         return ADDRESS.test(address.trim())
           ? { kind, guardian: address.trim() }
@@ -756,7 +769,8 @@ function ProposeDialog({
           !(days > 0) ||
           !Number.isInteger(r) ||
           r < 0 ||
-          r > 255
+          r > 255 ||
+          !timelockOk
         )
           return null;
         return {
@@ -769,10 +783,22 @@ function ProposeDialog({
             budgetPeriodSecs: Math.round(days * 24 * H),
             autoTripSecs: values[3]!,
           },
+          unpausableMask: alwaysOpen.length
+            ? scopeMask(...alwaysOpen)
+            : BigInt(0),
+          timelockSecs: timelockSecs!,
         };
       }
     }
   })();
+
+  // A limits "raise" that only tightens doesn't need the timelock.
+  const onlyTightens =
+    kind === "raiseLimits" &&
+    limiter &&
+    limits &&
+    !sameParams(limiterParams(limiter), limits) &&
+    loosenedSettings(limiterParams(limiter), limits).length === 0;
 
   const tx = useTx();
   const [sending, setSending] = useState(false);
@@ -832,44 +858,41 @@ function ProposeDialog({
             <Select
               label="Token"
               value={mint}
-              onChange={(e) => setMint(e.target.value)}
+              onChange={(e) => {
+                const next = limiters.find(
+                  (l) => l.account.mint === e.target.value,
+                );
+                setMint(e.target.value);
+                if (next)
+                  setDraft(
+                    draftOf(
+                      next.account,
+                      tokenInfo(next.account.mint).decimals,
+                    ),
+                  );
+              }}
               options={limiters.map((l) => ({
                 value: l.account.mint,
                 label: tokenInfo(l.account.mint).symbol,
               }))}
             />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input
-                label="Cap per window"
-                value={cap}
-                onChange={(e) => setCap(e.target.value)}
-                inputMode="decimal"
-                suffix={token.symbol}
+            {draft && (
+              <LimitsFields
+                draft={draft}
+                errors={parsed && "errors" in parsed ? parsed.errors : {}}
+                symbol={token.symbol}
+                onChange={(patch) =>
+                  setDraft((d) => (d ? { ...d, ...patch } : d))
+                }
               />
-              <Input
-                label="Or a share of the vault"
-                value={capPct}
-                onChange={(e) => setCapPct(e.target.value)}
-                inputMode="decimal"
-                suffix="%"
-                hint="0 for none."
-              />
-              <Input
-                label="Hold withdrawals from"
-                value={threshold}
-                onChange={(e) => setThreshold(e.target.value)}
-                inputMode="decimal"
-                suffix={token.symbol}
-              />
-              <Input
-                label="Or a share of the vault"
-                value={thresholdPct}
-                onChange={(e) => setThresholdPct(e.target.value)}
-                inputMode="decimal"
-                suffix="%"
-                hint="0 for none."
-              />
-            </div>
+            )}
+            {onlyTightens && (
+              <p className="text-body text-ink-secondary">
+                Every setting here is the same or stricter, so it doesn&rsquo;t
+                need the timelock: use Tighten under Token limits to apply it at
+                once.
+              </p>
+            )}
           </>
         )}
         {(kind === "addGuardian" || kind === "setAdmin") && (
@@ -892,49 +915,97 @@ function ProposeDialog({
           />
         )}
         {kind === "changePolicy" && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              label="Longest guardian pause"
-              value={maxPause}
-              onChange={(e) => setMaxPause(e.target.value)}
-              inputMode="decimal"
-              suffix="hours"
-            />
-            <Input
-              label="Renewals per pause"
-              value={renewals}
-              onChange={(e) => setRenewals(e.target.value)}
-              inputMode="numeric"
-            />
-            <Input
-              label="Cooldown"
-              value={cooldown}
-              onChange={(e) => setCooldown(e.target.value)}
-              inputMode="decimal"
-              suffix="hours"
-            />
-            <Input
-              label="Auto-trip pause"
-              value={autoTrip}
-              onChange={(e) => setAutoTrip(e.target.value)}
-              inputMode="decimal"
-              suffix="hours"
-            />
-            <Input
-              label="Pause budget"
-              value={budget}
-              onChange={(e) => setBudget(e.target.value)}
-              inputMode="decimal"
-              suffix="hours"
-            />
-            <Input
-              label="Per period of"
-              value={period}
-              onChange={(e) => setPeriod(e.target.value)}
-              inputMode="decimal"
-              suffix="days"
-            />
-          </div>
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="Longest guardian pause"
+                value={maxPause}
+                onChange={(e) => setMaxPause(e.target.value)}
+                inputMode="decimal"
+                suffix="hours"
+              />
+              <Input
+                label="Renewals per pause"
+                value={renewals}
+                onChange={(e) => setRenewals(e.target.value)}
+                inputMode="numeric"
+              />
+              <Input
+                label="Cooldown"
+                value={cooldown}
+                onChange={(e) => setCooldown(e.target.value)}
+                inputMode="decimal"
+                suffix="hours"
+              />
+              <Input
+                label="Auto-trip pause"
+                value={autoTrip}
+                onChange={(e) => setAutoTrip(e.target.value)}
+                inputMode="decimal"
+                suffix="hours"
+              />
+              <Input
+                label="Pause budget"
+                value={budget}
+                onChange={(e) => setBudget(e.target.value)}
+                inputMode="decimal"
+                suffix="hours"
+              />
+              <Input
+                label="Per period of"
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                inputMode="decimal"
+                suffix="days"
+              />
+              <Input
+                label="Timelock"
+                value={timelock}
+                onChange={(e) => setTimelock(e.target.value)}
+                inputMode="decimal"
+                suffix="hours"
+                hint="24 to 48 hours."
+                error={
+                  timelock.trim() && !timelockOk
+                    ? "Between 24 and 48 hours."
+                    : undefined
+                }
+              />
+            </div>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-1 text-body font-medium">
+                Scopes that are always open
+              </legend>
+              <div className="flex flex-wrap gap-2">
+                {POLICY_SCOPES.map((n) => {
+                  const on = alwaysOpen.includes(n);
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() =>
+                        setAlwaysOpen((s) =>
+                          on
+                            ? s.filter((x) => x !== n)
+                            : [...s, n].sort((a, b) => a - b),
+                        )
+                      }
+                      className={cx(
+                        "inline-flex h-9 items-center gap-1.5 rounded-control border px-3 text-body",
+                        on
+                          ? "border-primary bg-primary text-on-primary"
+                          : "border-line-strong bg-surface text-ink hover:bg-surface-inset",
+                      )}
+                    >
+                      {on && <Check aria-hidden className="size-4" />}
+                      {scopeLabel(n)}
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          </>
         )}
         {action && (
           <InsetPanel className="text-body">
