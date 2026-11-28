@@ -162,6 +162,16 @@ export function roleOf(
   return "user";
 }
 
+/**
+ * The demo's protected protocol (the test vault): its program, vault
+ * account, mint and token account. In mock mode, the mock's; in live mode,
+ * null until checkpoint B gives the devnet addresses.
+ */
+export function useTestVault() {
+  const hydrated = useHydrated();
+  return hydrated ? (getMockClient()?.testVault ?? null) : null;
+}
+
 /** Mock-only demo controls, or null in live mode (and before hydration). */
 export function useMockControls() {
   const wallet = useConnectedWallet();
