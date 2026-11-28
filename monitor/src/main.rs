@@ -2,6 +2,7 @@
 //! with a Postgres store and the admin HTTP API (docs/FRONTEND.md section 7).
 
 mod api;
+mod bot;
 mod config;
 mod decode;
 mod detectors;
@@ -87,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
             ),
         ],
         now,
+        seeds(&store, protocol_id).await?,
     );
     let seen = Arc::new(ingest::Seen::new(50_000));
 
@@ -116,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
         &cfg.protocol.breakglass_program,
         &cfg.protocol.protected_program,
         &cfg.protocol.vault_token_accounts,
+        &cfg.detectors.flagged_funders,
     )?);
     let (tx, mut rx) = mpsc::channel::<ingest::Ingest>(4096);
     for (i, source) in sources.iter().enumerate() {
@@ -130,6 +133,36 @@ async fn main() -> anyhow::Result<()> {
     }
     drop(tx);
 
+    // Guardian bot (opt-in).
+    let bot_tx = if cfg.bot.enabled {
+        let path = std::env::var("GUARDIAN_KEYPAIR_PATH")
+            .ok()
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("[bot] enabled = true needs GUARDIAN_KEYPAIR_PATH (monitor/.env)")
+            })?;
+        let signer: Arc<dyn bot::GuardianSigner> = Arc::new(bot::FileSigner::load(&path)?);
+        let accounts = bot::Accounts::new(
+            cfg.protocol.breakglass_program.parse()?,
+            cfg.protocol.protected_program.parse()?,
+        );
+        let guardian_bot = bot::Bot::new(
+            cfg.bot.clone(),
+            signer,
+            accounts,
+            &cfg.network.rpc_urls,
+            store.clone(),
+            protocol_id,
+        );
+        guardian_bot.check_guardian().await?;
+        let (btx, brx) = mpsc::channel(1024);
+        tokio::spawn(guardian_bot.run(brx));
+        Some(btx)
+    } else {
+        tracing::info!("guardian bot disabled ([bot] enabled = false)");
+        None
+    };
+
     let mut pipeline = pipeline::Pipeline::new(
         store,
         protocol_id,
@@ -139,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
         health,
         stream_tx,
     );
+    pipeline.bot = bot_tx;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut repage = tokio::time::interval(Duration::from_secs(5));
     tracing::info!(protocol = %cfg.protocol.name, rpcs = sources.len(), "monitor ready");
@@ -157,4 +191,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// History the detectors need at startup.
+async fn seeds(store: &store::Store, protocol_id: i32) -> anyhow::Result<detectors::Seeds> {
+    let (books, holds) = store.deposit_seed(protocol_id).await?;
+    Ok(detectors::Seeds {
+        history_start: store.history_start(protocol_id).await?,
+        velocity: store.velocity_seed(protocol_id).await?,
+        books,
+        holds,
+    })
 }

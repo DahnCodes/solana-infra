@@ -35,6 +35,7 @@ impl Detector for PauseTrip {
                 actions: actions.into(),
                 signature: sig.clone(),
                 dedupe_key: key,
+                subject: Default::default(),
             }]
         };
         match e {

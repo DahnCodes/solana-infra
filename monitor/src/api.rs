@@ -24,7 +24,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::event::now_secs;
 use crate::health::{Health, RpcHealth};
 use crate::router::StreamMsg;
-use crate::store::{AckError, Alert, Event, Hold, Incident, Page, Store};
+use crate::store::{AckError, Action, Alert, Event, Hold, Incident, Page, PendingChange, Store};
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -311,6 +311,40 @@ async fn events(
     ))
 }
 
+async fn pending_changes(
+    State(s): State<ApiState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult<List<PendingChange>> {
+    let (limit, cursor) = paging(&q)?;
+    let status = one_of(
+        &q,
+        "status",
+        &["pending", "vetoed", "executed", "cancelled"],
+    )?;
+    Ok(Json(
+        s.store
+            .list_pending(status, limit, cursor)
+            .await
+            .map_err(ApiError::internal)?
+            .into(),
+    ))
+}
+
+async fn actions(
+    State(s): State<ApiState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult<List<Action>> {
+    let (limit, cursor) = paging(&q)?;
+    let kind = one_of(&q, "kind", &["pause", "freeze"])?;
+    Ok(Json(
+        s.store
+            .list_actions(kind, limit, cursor)
+            .await
+            .map_err(ApiError::internal)?
+            .into(),
+    ))
+}
+
 async fn stream(
     State(s): State<ApiState>,
 ) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
@@ -334,6 +368,8 @@ pub fn router(state: ApiState, cors_origins: &[String]) -> anyhow::Result<Router
         .route("/incidents/{id}/ack", post(ack))
         .route("/holds", get(holds))
         .route("/events", get(events))
+        .route("/pending-changes", get(pending_changes))
+        .route("/actions", get(actions))
         .route("/stream", get(stream))
         .fallback(not_found)
         .with_state(state);

@@ -104,13 +104,17 @@ async function latency(
 ): Promise<number | undefined> {
   const sig = / \| tx (\w+)/.exec(line.text)?.[1];
   if (!sig) return undefined;
-  const tx = await connection.getTransaction(sig, {
-    commitment: "confirmed",
-    maxSupportedTransactionVersion: 0,
-  });
-  if (!tx?.blockTime) return undefined;
-  // blockTime has 1s resolution: count from the end of that second.
-  return line.at - (tx.blockTime + 1) * 1000;
+  // Retry: the RPC may not have indexed the transaction yet.
+  for (let i = 0; i < 30; i++) {
+    const tx = await connection.getTransaction(sig, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    // blockTime has 1s resolution: count from the end of that second.
+    if (tx?.blockTime) return line.at - (tx.blockTime + 1) * 1000;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return undefined;
 }
 
 async function main() {

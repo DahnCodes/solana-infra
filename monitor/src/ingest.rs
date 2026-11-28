@@ -12,7 +12,7 @@
 //! ingestor skips a signature the pipeline already accepted, and the pipeline
 //! drops late duplicates.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,6 +20,7 @@ use std::time::Duration;
 use futures::stream::{select_all, BoxStream, StreamExt};
 use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 use solana_pubsub_client::nonblocking::pubsub_client::PubsubClient;
 use solana_rpc_client_api::config::{
     RpcAccountInfoConfig, RpcTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter,
@@ -28,10 +29,12 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use solana_transaction_status_client_types::option_serializer::OptionSerializer;
-use solana_transaction_status_client_types::{UiInstruction, UiTransactionEncoding};
+use solana_transaction_status_client_types::{
+    UiInstruction, UiTransactionEncoding, UiTransactionStatusMeta, UiTransactionTokenBalance,
+};
 use tokio::sync::mpsc;
 
-use crate::decode::{decode_event, BgEvent, DecodeError, PendingWithdrawal};
+use crate::decode::{decode_event, BgEvent, DecodeError, PendingConfig, PendingWithdrawal};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccountKind {
@@ -44,10 +47,7 @@ pub enum Ingest {
     Tx {
         source: String,
         signature: String,
-        slot: u64,
-        block_time: Option<i64>,
-        events: Vec<BgEvent>,
-        holds: Vec<(String, PendingWithdrawal)>,
+        data: TxData,
     },
     Account {
         source: String,
@@ -62,16 +62,44 @@ pub enum Ingest {
     },
 }
 
+/// Everything the monitor takes from one transaction.
+#[derive(Debug, Clone, Default)]
+pub struct TxData {
+    pub slot: u64,
+    pub block_time: Option<i64>,
+    pub events: Vec<BgEvent>,
+    /// PendingWithdrawal accounts the events mention (address, account).
+    pub holds: Vec<(String, PendingWithdrawal)>,
+    /// PendingConfig accounts the events mention (address, account).
+    pub pending: Vec<(String, PendingConfig)>,
+    /// Tokens moved into watched vaults: (owner, mint, vault, amount).
+    pub deposits: Vec<(String, String, String, u64)>,
+    /// Withdrawing wallets: (wallet, first seen, flagged funder).
+    pub wallets: Vec<(String, Option<i64>, Option<String>)>,
+}
+
+/// A wallet's (first seen, flagged funder).
+type Profile = (Option<i64>, Option<String>);
+
 /// What to watch, shared by all ingestors.
 pub struct Watch {
     pub breakglass: Pubkey,
     pub protected: Pubkey,
     /// (account, kind): vault token accounts and ProgramData accounts.
     pub accounts: Vec<(Pubkey, AccountKind)>,
+    /// Mixer/bridge addresses for the fresh-address check.
+    pub flagged_funders: Vec<Pubkey>,
+    /// Wallet profiles already looked up (a wallet's oldest transaction never changes).
+    profiles: Mutex<HashMap<Pubkey, Profile>>,
 }
 
 impl Watch {
-    pub fn new(breakglass: &str, protected: &str, vaults: &[String]) -> anyhow::Result<Self> {
+    pub fn new(
+        breakglass: &str,
+        protected: &str,
+        vaults: &[String],
+        flagged_funders: &[String],
+    ) -> anyhow::Result<Self> {
         let breakglass = Pubkey::from_str(breakglass)?;
         let protected = Pubkey::from_str(protected)?;
         let mut accounts = vec![];
@@ -91,6 +119,11 @@ impl Watch {
             breakglass,
             protected,
             accounts,
+            flagged_funders: flagged_funders
+                .iter()
+                .map(|f| Pubkey::from_str(f))
+                .collect::<Result<_, _>>()?,
+            profiles: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -250,15 +283,12 @@ async fn run(
                 );
                 tokio::spawn(async move {
                     match fetch(&rpc, &sig, &watch, &seen).await {
-                        Ok(Some((slot, block_time, events, holds))) => {
+                        Ok(Some(data)) => {
                             let _ = out
                                 .send(Ingest::Tx {
                                     source,
                                     signature: sig,
-                                    slot,
-                                    block_time,
-                                    events,
-                                    holds,
+                                    data,
                                 })
                                 .await;
                         }
@@ -305,20 +335,13 @@ async fn run(
     anyhow::bail!("subscription stream ended")
 }
 
-type Fetched = (
-    u64,
-    Option<i64>,
-    Vec<BgEvent>,
-    Vec<(String, PendingWithdrawal)>,
-);
-
 /// Fetch a transaction (retrying until it's confirmed) and decode its events.
 async fn fetch(
     rpc: &RpcClient,
     sig: &str,
     watch: &Watch,
     seen: &Seen,
-) -> anyhow::Result<Option<Fetched>> {
+) -> anyhow::Result<Option<TxData>> {
     let signature = Signature::from_str(sig)?;
     let cfg = RpcTransactionConfig {
         encoding: Some(UiTransactionEncoding::Base64),
@@ -383,33 +406,221 @@ async fn fetch(
     }
 
     let mut hold_keys: Vec<Pubkey> = vec![];
+    let mut change_keys: Vec<Pubkey> = vec![];
+    let mut owners: Vec<Pubkey> = vec![];
     for e in &events {
-        let h = match e {
-            BgEvent::LargeWithdrawalQueued(x) => x.hold,
-            BgEvent::LimitHoldQueued(x) => x.hold,
-            BgEvent::WithdrawalScreenQueued(x) => x.hold,
-            BgEvent::HoldFrozen(x) => x.hold,
-            BgEvent::HoldResolved(x) => x.hold,
+        let (hold, owner) = match e {
+            BgEvent::LargeWithdrawalQueued(x) => (Some(x.hold), Some(x.owner)),
+            BgEvent::LimitHoldQueued(x) => (Some(x.hold), Some(x.owner)),
+            BgEvent::WithdrawalScreenQueued(x) => (Some(x.hold), Some(x.owner)),
+            BgEvent::HoldFrozen(x) => (Some(x.hold), None),
+            BgEvent::HoldResolved(x) => (Some(x.hold), None),
+            BgEvent::OutflowRecorded(x) => (None, Some(x.owner)),
+            BgEvent::ConfigChangeProposed(x) => (Some(x.change), None),
+            BgEvent::ConfigChangeExecuted(x) => (Some(x.change), None),
+            BgEvent::ConfigChangeVetoed(x) => (Some(x.change), None),
+            BgEvent::ConfigChangeCancelled(x) => (Some(x.change), None),
             _ => continue,
         };
-        let pk = Pubkey::new_from_array(h.0);
-        if !hold_keys.contains(&pk) {
-            hold_keys.push(pk);
+        let is_change = matches!(
+            e,
+            BgEvent::ConfigChangeProposed(_)
+                | BgEvent::ConfigChangeExecuted(_)
+                | BgEvent::ConfigChangeVetoed(_)
+                | BgEvent::ConfigChangeCancelled(_)
+        );
+        if let Some(h) = hold {
+            let pk = Pubkey::new_from_array(h.0);
+            let list = if is_change {
+                &mut change_keys
+            } else {
+                &mut hold_keys
+            };
+            if !list.contains(&pk) {
+                list.push(pk);
+            }
         }
-    }
-    let mut holds = vec![];
-    for pk in hold_keys {
-        if let Ok(Some(acc)) = rpc
-            .get_account_with_commitment(&pk, CommitmentConfig::confirmed())
-            .await
-            .map(|r| r.value)
-        {
-            if let Some(h) = PendingWithdrawal::decode(&acc.data) {
-                holds.push((pk.to_string(), h));
+        if let Some(o) = owner {
+            let pk = Pubkey::new_from_array(o.0);
+            if !owners.contains(&pk) {
+                owners.push(pk);
             }
         }
     }
-    Ok(Some((tx.slot, tx.block_time, events, holds)))
+
+    let mut data = TxData {
+        slot: tx.slot,
+        block_time: tx.block_time,
+        ..Default::default()
+    };
+    for pk in hold_keys {
+        if let Some(acc) = account(rpc, &pk).await {
+            if let Some(h) = PendingWithdrawal::decode(&acc) {
+                data.holds.push((pk.to_string(), h));
+            }
+        }
+    }
+    for pk in change_keys {
+        if let Some(acc) = account(rpc, &pk).await {
+            if let Some(p) = PendingConfig::decode(&acc) {
+                data.pending.push((pk.to_string(), p));
+            }
+        }
+    }
+    for pk in owners {
+        let (first_seen, funder) = profile(rpc, &pk, watch).await;
+        data.wallets.push((pk.to_string(), first_seen, funder));
+    }
+    data.deposits = deposits(meta, &keys, watch);
+    data.events = events;
+    Ok(Some(data))
+}
+
+async fn account(rpc: &RpcClient, pk: &Pubkey) -> Option<Vec<u8>> {
+    rpc.get_account_with_commitment(pk, CommitmentConfig::confirmed())
+        .await
+        .ok()?
+        .value
+        .map(|a| a.data)
+}
+
+/// Pages of signatures read to find a wallet's oldest transaction. A wallet
+/// with more history than this is judged by the oldest one found, which is
+/// still recent only for a very busy new wallet (it stays "fresh": fail closed).
+const PROFILE_PAGES: usize = 3;
+
+/// (first seen, flagged funder) for a wallet. `(None, None)` if the lookup failed.
+async fn profile(rpc: &RpcClient, wallet: &Pubkey, watch: &Watch) -> (Option<i64>, Option<String>) {
+    if let Some(p) = watch.profiles.lock().unwrap().get(wallet).cloned() {
+        return p;
+    }
+    let mut before = None;
+    let mut oldest = None;
+    for _ in 0..PROFILE_PAGES {
+        let cfg = GetConfirmedSignaturesForAddress2Config {
+            before,
+            until: None,
+            limit: Some(1000),
+            commitment: Some(CommitmentConfig::confirmed()),
+        };
+        let page = match rpc
+            .get_signatures_for_address_with_config(wallet, cfg)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(%wallet, error = %e, "wallet lookup failed; treating it as unverified");
+                return (None, None);
+            }
+        };
+        let Some(last) = page.last().cloned() else {
+            break;
+        };
+        let full = page.len() == 1000;
+        before = Signature::from_str(&last.signature).ok();
+        oldest = Some(last);
+        if !full {
+            break;
+        }
+    }
+    let Some(oldest) = oldest else {
+        return (None, None);
+    };
+    let mut funder = None;
+    if !watch.flagged_funders.is_empty() {
+        let cfg = RpcTransactionConfig {
+            encoding: Some(UiTransactionEncoding::Base64),
+            commitment: Some(CommitmentConfig::confirmed()),
+            max_supported_transaction_version: Some(0),
+        };
+        let Ok(sig) = Signature::from_str(&oldest.signature) else {
+            return (None, None);
+        };
+        match rpc.get_transaction_with_config(&sig, cfg).await {
+            Ok(t) => {
+                let keys = t
+                    .transaction
+                    .transaction
+                    .decode()
+                    .map(|v| v.message.static_account_keys().to_vec())
+                    .unwrap_or_default();
+                funder = watch
+                    .flagged_funders
+                    .iter()
+                    .find(|f| keys.contains(f))
+                    .map(|f| f.to_string());
+            }
+            Err(_) => return (None, None),
+        }
+    }
+    let result = (oldest.block_time, funder);
+    watch
+        .profiles
+        .lock()
+        .unwrap()
+        .insert(*wallet, result.clone());
+    result
+}
+
+/// Tokens that moved into a watched vault in this transaction, attributed to
+/// the owner of the token account that lost the same mint.
+fn deposits(
+    meta: &UiTransactionStatusMeta,
+    keys: &[Pubkey],
+    watch: &Watch,
+) -> Vec<(String, String, String, u64)> {
+    let (OptionSerializer::Some(pre), OptionSerializer::Some(post)) =
+        (&meta.pre_token_balances, &meta.post_token_balances)
+    else {
+        return vec![];
+    };
+    let amount = |list: &[UiTransactionTokenBalance], idx: u8| -> u64 {
+        list.iter()
+            .find(|b| b.account_index == idx)
+            .and_then(|b| b.ui_token_amount.amount.parse().ok())
+            .unwrap_or(0)
+    };
+    let mut out = vec![];
+    for (vault, kind) in &watch.accounts {
+        if *kind != AccountKind::Vault {
+            continue;
+        }
+        let Some(vi) = keys.iter().position(|k| k == vault) else {
+            continue;
+        };
+        let vi = vi as u8;
+        let Some(mint) = post
+            .iter()
+            .find(|b| b.account_index == vi)
+            .map(|b| b.mint.clone())
+        else {
+            continue;
+        };
+        let (before, after) = (amount(pre, vi), amount(post, vi));
+        if after <= before {
+            continue;
+        }
+        let payer = post
+            .iter()
+            .filter(|b| b.account_index != vi && b.mint == mint)
+            .map(|b| {
+                (
+                    b,
+                    amount(pre, b.account_index).saturating_sub(amount(post, b.account_index)),
+                )
+            })
+            .filter(|(_, dec)| *dec > 0)
+            .max_by_key(|(_, dec)| *dec);
+        let owner = match payer {
+            Some((b, _)) => match &b.owner {
+                OptionSerializer::Some(o) => o.clone(),
+                _ => continue,
+            },
+            None => continue,
+        };
+        out.push((owner, mint, vault.to_string(), after - before));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -433,6 +644,7 @@ mod tests {
             "AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB",
             "2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn",
             &["11111111111111111111111111111111".into()],
+            &[],
         )
         .unwrap();
         assert_eq!(w.accounts.len(), 3);

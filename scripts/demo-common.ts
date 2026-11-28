@@ -105,10 +105,19 @@ export async function setup() {
   /**
    * A fresh mint, vault and limiter, and a user who deposited `deposit` base
    * units. `addUser(deposit)` adds more depositors to the same vault.
+   * `instantAllowance: 0` turns on screen-all; `invariantsOff` only works on
+   * a planted-bug build of test-vault.
    */
   async function newVault(
-    limiter: { cap: BN; threshold: BN; holdSecs: BN | null },
+    limiter: {
+      cap: BN;
+      threshold: BN;
+      holdSecs: BN | null;
+      instantAllowance?: BN | null;
+      screenSecs?: BN | null;
+    },
     deposit: BN,
+    opts: { invariantsOff?: boolean } = {},
   ) {
     const mint = await createMint(connection, payer, payer.publicKey, null, 6);
     const vault = pda(
@@ -125,7 +134,7 @@ export async function setup() {
       mint.toBuffer(),
     ]);
     await vaultProgram.methods
-      .initializeVault(false)
+      .initializeVault(opts.invariantsOff ?? false)
       .accountsPartial({ payer: payer.publicKey, mint })
       .rpc();
     await bg.methods
@@ -138,8 +147,8 @@ export async function setup() {
         largeThresholdBps: 0,
         holdSecs: limiter.holdSecs,
         autoTripSecs: null,
-        instantAllowance: null,
-        screenSecs: null,
+        instantAllowance: limiter.instantAllowance ?? null,
+        screenSecs: limiter.screenSecs ?? null,
       })
       .accountsPartial({
         admin: payer.publicKey,
@@ -224,11 +233,25 @@ export async function setup() {
           .signers([user])
           .rpc();
       }
-      return { user, userToken, withdraw, claim };
+      /** PLANTED BUG: move `amount` out of the vault with no gate at all. */
+      async function skim(amount: BN) {
+        return vaultProgram.methods
+          .skim(amount)
+          .accountsPartial({
+            caller: user.publicKey,
+            mint,
+            vault,
+            vaultToken,
+            to: userToken,
+          })
+          .signers([user])
+          .rpc();
+      }
+      return { user, userToken, withdraw, claim, skim };
     }
 
     const first = await addUser(deposit);
-    return { ...first, mint, vaultToken, flowLimiter, addUser };
+    return { ...first, mint, vault, vaultToken, flowLimiter, addUser };
   }
 
   /** Lift any running pause on WITHDRAW (admin) so the demo starts clean. */

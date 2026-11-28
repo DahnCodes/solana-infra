@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::Detector;
 use crate::decode::BgEvent;
-use crate::event::{ChainEvent, Observed, Severity, Signal};
+use crate::event::{ChainEvent, Observed, Severity, Signal, Subject};
 
 /// Critical when a vault's balance drops by more than the outflows Breakglass
 /// recorded for its mint: tokens left through a path that skipped the gate.
@@ -100,6 +100,7 @@ impl Detector for BalanceDelta {
                     actions: "Likely an unprotected instruction. Guardian: pause all protected scopes now (the bot does this from Phase 6). Find the path.".into(),
                     signature: None,
                     dedupe_key: format!("balance:{mint}"),
+                    subject: Subject { mint: Some(mint.clone()), ..Default::default() },
                 });
                 st.unexplained = 0;
                 st.over_since = None;

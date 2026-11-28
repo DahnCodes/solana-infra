@@ -13,7 +13,8 @@ Helper and demo scripts that you run by hand against a local validator or devnet
 | `demo-timelock.ts` | 4 | Proposals wait, early execute fails, guardian veto works, tightening applies at once |
 | `squads-propose.ts` | 4 | `propose_config` through a Squads v4 multisig (devnet by default) |
 | `monitor-e2e.ts` | 5 | `yarn monitor:e2e`: monitor end to end (two RPCs, alerts within 5s, RPC killed) |
-| `attack-screened.ts` | 6 | Guardian bot freezes attacker withdrawals |
+| `attack-screened.ts` | 6 | Guardian bot freezes a fresh wallet's screened withdrawals |
+| `bot-e2e.ts` | 6 | `yarn bot:e2e`: screening, balance-delta pause, cooldown handling (planted-bug build) |
 | `attacks/*.ts` | 7 | Full attack suite, `yarn test:attacks` |
 
 Run with: `yarn ts-node scripts/<name>.ts` (local validator running, programs deployed).

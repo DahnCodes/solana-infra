@@ -20,6 +20,22 @@ pub enum ChainEvent {
     ProgramData { program: String, hash: String },
     /// An ingestor's websocket is alive (slot notifications).
     Heartbeat { source: String },
+    /// Tokens moved into a watched vault, attributed to the owner of the
+    /// token account they came from (from the transaction's token balances).
+    Deposit {
+        owner: String,
+        mint: String,
+        vault: String,
+        amount: u64,
+    },
+    /// What the monitor knows about a wallet that just withdrew.
+    /// `first_seen`: block time of its oldest transaction found (None: lookup failed).
+    /// `flagged_funder`: a configured mixer/bridge address in that first transaction.
+    WalletProfile {
+        wallet: String,
+        first_seen: Option<i64>,
+        flagged_funder: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +91,15 @@ pub struct Signal {
     pub signature: Option<String>,
     /// Signals with the same key fold into one incident (one per root cause).
     pub dedupe_key: String,
+    /// What the signal is about, for the guardian bot (which hold to freeze).
+    pub subject: Subject,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Subject {
+    pub hold: Option<String>,
+    pub owner: Option<String>,
+    pub mint: Option<String>,
 }
 
 /// Unix seconds now.

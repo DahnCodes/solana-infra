@@ -10,7 +10,7 @@ Claude Code updates this file at the end of every phase (see docs/BUILD_PLAN.md)
 | 3 Zero-loss mode | Done (2026-11-27) | `cargo test -p breakglass-sdk` (8 passing), `anchor test` (33 passing), `yarn test:attack` (34 passing on the planted-bug build), `yarn ts-node scripts/attack-big-drain.ts` | See Phase 3 notes |
 | 4 Timelocks | Done (2026-11-27) | `cargo test -p breakglass` (43 passing), `anchor test` (48 passing incl. 7 LiteSVM clock-warp tests), `yarn ts-node scripts/demo-timelock.ts` | See Phase 4 notes |
 | 5 Monitor v1 | Done (2026-11-27) | `cd monitor && cargo test` (44 passing, needs Postgres), `yarn monitor:e2e` (localnet + Postgres) | See Phase 5 notes |
-| 6 Guardian bot and screening | Not started | | |
+| 6 Guardian bot and screening | Done (2026-11-28) | `cd monitor && cargo test` (69 passing, needs Postgres), `yarn bot:e2e` (planted-bug build), `yarn ts-node scripts/attack-screened.ts` | See Phase 6 notes |
 | 7 Attack suite and CI | Not started | | |
 | 8 Upgrade vault and co-signer (optional) | Not started | | |
 
@@ -280,12 +280,85 @@ The e2e uses `heartbeat_timeout_secs = 10` to keep the run short (the default is
 - Incidents are never auto-resolved (`resolved` is reserved). Liveness outages open a new incident each time instead.
 
 
+## Phase 6 notes
+
+**Built (`monitor/`):**
+- **Guardian bot** (`bot.rs`), opt-in with `[bot] enabled = true`:
+  - It holds only the guardian key, behind the `GuardianSigner` trait. `FileSigner` loads `GUARDIAN_KEYPAIR_PATH`; a KMS signer implements the same trait later.
+  - At startup it checks its key is a guardian of the config, and refuses to start otherwise.
+  - It builds the `pause` and `freeze_held` instructions by hand; a test checks them against the committed IDL (discriminator, account order, writable/signer flags).
+  - It sends through the first RPC that works, and names on-chain errors from the IDL (e.g. `GuardianCooldown (6007)`).
+- **Policy** (pure, unit-tested):
+  - Pause `pause_scopes` for `pause_secs` on a `balance_delta` Critical alone, or on Criticals from 2 different detectors within `critical_window_secs` (liveness doesn't count).
+  - Freeze any held withdrawal named by a `freeze_on` detector (fresh_address, velocity_baseline, deposit_history).
+  - At most `max_actions_per_minute` actions. No re-pause while its own pause runs, and at least 60s between pause attempts, so on-chain errors never become a loop.
+- **Every attempt is logged** to the `actions` table and served at `GET /actions`.
+- **Screening detectors** (pure, fixture-tested):
+  - `fresh_address`: the wallet's first-seen time comes from `getSignaturesForAddress` (cached; at most 3 pages; a very busy new wallet still counts as new). A configured mixer/bridge in its first transaction also flags it.
+  - `deposit_history`: amount vs. what the wallet deposited, minus what it withdrew or has held. Deposits come from the watched vaults' token-balance changes in each transaction.
+  - `velocity_baseline`: hourly requested outflow vs. a 30-day hourly mean ± 4σ (zero hours included, 24h of history minimum), seeded from Postgres at startup.
+
+  Screening runs on every new hold, so screen-all holds are judged within about a second of being queued, long before `screen_secs` (120s) ends.
+- **Store** (`migrations/0002_bot.sql`):
+  - `flows` (deposit/outflow/held/claim time series): the velocity baseline and deposit-history seeds come from it
+  - `actions`
+  - `pending_changes` (PendingConfig mirror, refreshed on every config-change event)
+- **API:** `GET /pending-changes` and `GET /actions` (FRONTEND.md section 7), with db tests for both.
+- **test-vault:** `skim(amount)`, an unprotected outflow behind `planted-bug` (it always fails with `SkimDisabled` in a default build). It's the "unprotected path" that `balance_delta` and the bot must catch.
+- **`balance_grace_secs` default is now 6s** (was 15s), so the bot's pause lands within 10s of a drain.
+- **Scripts:**
+  - `scripts/bot-e2e.ts` (`yarn bot:e2e`): the acceptance run.
+  - `scripts/attack-screened.ts`: the manual check.
+  - `demo-common.ts` gains screening options, invariants-off and `skim`.
+
+**Test commands:**
+```bash
+docker compose -f monitor/docker-compose.yml up -d
+(cd monitor && cargo test)                    # 69 passing
+# acceptance (planted-bug build for skim)
+solana-test-validator --reset
+anchor build -p test_vault -- --features planted-bug && anchor deploy
+(cd monitor && cargo build) && yarn bot:e2e
+anchor build -p test_vault && anchor deploy   # put the safe build back
+```
+Last `yarn bot:e2e` run:
+```
+PASS: monitor and guardian bot running
+PASS: 3/3 attacker withdrawals frozen before release (117s to spare)
+PASS: normal user's withdrawal left queued (clean)
+PASS: normal user claimed after 120s
+PASS: attacker's claim refused: HoldFrozen
+PASS: bot paused WITHDRAW 6s after the skim (triggered by balance_delta)
+PASS: bot hit the cooldown on-chain and logged it: GuardianCooldown (6007)
+PASS: bot kept running, no retry loop (2 pause attempts total)
+```
+The e2e uses a 60s fresh-wallet threshold (default 24h) so the "normal" user can be old enough within the run, and a 5s bot pause so the cooldown case doesn't wait an hour. In that run, `deposit_history` and `fresh_address` both flagged each attacker hold (checked in Postgres). The bot froze on the first flag and skipped the duplicate. Manual check: `attack-screened.ts` printed `ATTACK FAILED: 3/3 withdrawals frozen by guardian bot`.
+
+**Found while verifying:**
+- **Actions had no protocol:** `GET /actions` and `GET /pending-changes` returned rows for every protocol in the database without saying which, and the e2e picked up a previous run's pause. Both now carry `protocol` (like incidents), and the e2e filters on it.
+- **E2e race:** both e2e scripts now retry `getTransaction` until the RPC has indexed the transaction. A just-confirmed transaction sometimes isn't indexed yet.
+
+**Bug found and fixed during the manual check:** `deposit_history` judged mints whose vault the monitor wasn't watching, so it saw "deposited 0" and flagged every new user. It now judges only mints with a watched vault (learned from the vault-balance events), and a unit test covers it.
+
+**Deferred:**
+- Velocity can't be exercised end to end on a fresh localnet (it needs 24h of history). It's covered by unit tests with a seeded baseline.
+- The KMS/HSM signer: the trait is in place; the file signer is for local dev only.
+- The "admin multisig" subscription (from Phase 5) is still open.
+
 ## Decisions
 
 (Ambiguities resolved during the build, with the reason.)
 
 - 2026-11-27 (Phase 0): `Cargo.lock`, `yarn.lock` and `clients/ts/yarn.lock` are committed. Without a lockfile cargo resolved crates that need edition 2024 (`blake3 1.8` → `digest 0.11` → `block-buffer 0.12`), which the Solana 2.1 platform-tools (cargo 1.79) can't build.
 - 2026-11-27 (Phase 0): the on-chain crates declare `rust-version = "1.79"`, so `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` keeps to compatible versions. `blake3` is pinned to 1.5.5 in `Cargo.lock` because 1.8.x doesn't declare an MSRV. If a future `cargo update` breaks `anchor build`, re-pin it with `cargo update -p blake3 --precise 1.5.5`.
+- 2026-11-28 (Phase 6): **screening checks are detectors, and the bot only acts on their signals.** Every rule stays pure and unit-testable, the same evidence pages humans, and the bot holds no screening logic of its own, just the policy that maps signals to guardian actions.
+- 2026-11-28 (Phase 6): **an unverifiable wallet counts as fresh** (fail closed). If its history can't be fetched, the hold is frozen, and the admin can still reject it or release it through the timelock. A false freeze costs a delay; a missed attacker costs the funds.
+- 2026-11-28 (Phase 6): **`deposit_history` only judges what it can see completely**: mints whose vault is watched, and wallets first seen after the monitor's records began (the protocol row's `created_at`). For older wallets, or unwatched vaults, missing deposits would flag honest users, so it stays quiet and `fresh_address` and `velocity_baseline` still apply.
+- 2026-11-28 (Phase 6): **velocity counts requested outflow** (allowed withdrawals plus newly held ones; claims aren't counted again). In screen-all mode every withdrawal is a hold, so counting only paid-out funds would never see a spike before release.
+- 2026-11-28 (Phase 6): **the bot's pause triggers:** `balance_delta` alone (spec), or Criticals from 2 different detectors within 10 min (spec: "2 independent detectors"). Liveness and the router's own re-pages are not evidence. "Related scopes" is the configured `pause_scopes` list, since the monitor can't infer which scopes a protocol's unprotected path touches.
+- 2026-11-28 (Phase 6): **the bot never retries a pause in a tight loop.** It skips pausing while its own pause runs and waits 60s between attempts. An on-chain refusal (cooldown, budget, removed guardian) is logged once per attempt, and the bot keeps serving freezes.
+- 2026-11-28 (Phase 6): **the bot refuses to start if its key isn't a guardian.** A misconfigured key would otherwise fail every action silently, in the middle of an incident.
+- 2026-11-28 (Phase 6): **`skim` is in test-vault's interface in every build but works only with `planted-bug`**, so test-vault's IDL is the same for both builds and the scripts don't need two variants.
 - 2026-11-27 (Phase 5): **the monitor copies the event types instead of sharing a crate.** A shared `breakglass-events` crate would pull anchor-lang 0.31 / solana-program 2.3 into the monitor's Solana 2.1 client tree, the version fight the separate workspace exists to avoid. Drift is caught instead by a test that decodes sample bytes for every event in the committed IDL.
 - 2026-11-27 (Phase 5): **`Event.kind` in the API is the Rust struct name** (`LimitTripped`), matching FRONTEND.md section 6's tables. Anchor's TS coder says `limitTripped`; that difference is documented.
 - 2026-11-27 (Phase 5): **alerts go out before (and regardless of) the database.** If Postgres is down, a page still goes out without an incident number. Alerting is the point; the store is history.
@@ -340,6 +413,7 @@ The e2e uses `heartbeat_timeout_secs = 10` to keep the run short (the default is
 
 - 2026-11-27 (Phase 0): program IDs changed from the starter IDs to `breakglass` = `AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB`, `test_vault` = `2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn`. Read the ID from the IDL's `address` field rather than hard-coding it.
 - 2026-11-27 (Phase 1): `PauseState` grows from 16 to 64 entries (`MAX_ACTIVE_PAUSES`), and a scope can now have several entries. Account size is 2925 bytes (was 765). Nothing is deployed yet, so there is no migration. Frontends must use `isScopePaused` / `pausedMask` rather than assuming one entry per scope.
+- 2026-11-28 (Phase 6): monitor API additions (non-breaking): `GET /pending-changes`, `GET /actions`, and new detector names in `incident.detector` (`fresh_address`, `deposit_history`, `velocity_baseline`). test-vault gains `skim` and the `SkimDisabled` error (appended). Breakglass itself is unchanged.
 - 2026-11-27 (Phase 5): the monitor API went live as specified in FRONTEND.md section 7. Details settled now: `Event.kind` is PascalCase; `Event.data` uses camelCase with u64/i64 as strings; ack errors are 401/400/404/409; lists are newest first; `/stream` messages are `{type, data}` JSON in SSE `data:` lines.
 - 2026-11-27 (Phase 4): `PendingConfig` layout replaced: `action_kind: u8` + `action_data: bytes` become `action: ConfigAction`, plus `proposed_by` and `cancelled`. It was never live before, so no migration.
 - 2026-11-27 (Phase 4): `initialize_config`: `admin` is no longer a signer (still passed as an account).

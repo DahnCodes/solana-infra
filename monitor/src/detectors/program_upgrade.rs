@@ -44,6 +44,7 @@ impl Detector for ProgramUpgrade {
                     actions: "If this wasn't a planned upgrade: guardian pause every scope, admin secure the upgrade authority.".into(),
                     signature: None,
                     dedupe_key: format!("upgrade:{program}:{hash}"),
+                    subject: Default::default(),
                 }]
             }
             _ => vec![],

@@ -19,7 +19,12 @@ window_high_pct = 80
 heartbeat_timeout_secs = 30
 # Unexplained vault drop (base units) tolerated, and how long a drop may stay unexplained.
 balance_tolerance = 0
-balance_grace_secs = 15
+balance_grace_secs = 6
+# Screening (Phase 6)
+fresh_address_max_age_secs = 86400   # a withdrawing wallet younger than this is flagged
+flagged_funders = []                 # mixer/bridge addresses (base58)
+velocity_sigma = 4.0                 # hourly outflow > mean + 4 sigma of the 30-day baseline
+velocity_min_hours = 24              # hours of history needed before velocity judges
 
 [alerts]
 # Sinks enabled for this run: "stdout", "telegram", "webhook" ("pagerduty" is a stub and refuses to start)
@@ -38,3 +43,16 @@ explorer_tx_url = "https://explorer.solana.com/tx/{signature}?cluster=custom&cus
 bind = "127.0.0.1:8080"
 # Origins allowed to call the API from a browser. Empty = same-origin only.
 cors_origins = []
+
+[bot]
+# The guardian bot holds ONLY the guardian key (GUARDIAN_KEYPAIR_PATH in .env).
+# It pauses on balance_delta alone or Criticals from 2 detectors, and freezes
+# held withdrawals flagged by the screening detectors. The on-chain guardian
+# limits (max duration, cooldown, budget) bound everything it does.
+enabled = false
+pause_scopes = [1]          # all protected outflow scopes
+pause_secs = 3600
+pause_reason = 100
+critical_window_secs = 600
+freeze_on = ["fresh_address", "velocity_baseline", "deposit_history"]
+max_actions_per_minute = 10

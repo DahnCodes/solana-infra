@@ -197,6 +197,7 @@ impl Router {
                 actions: format!("Acknowledge: POST /incidents/{}/ack", inc.id),
                 signature: inc.signatures.last().cloned(),
                 dedupe_key: inc.dedupe_key.clone(),
+                subject: Default::default(),
             };
             let mut alert = self.alert(&s, Some(inc.num_id()), inc.page_count as u32, escalated);
             alert.detector = inc.detector.clone();

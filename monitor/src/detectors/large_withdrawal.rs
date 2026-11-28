@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::Detector;
 use crate::decode::BgEvent;
-use crate::event::{rfc3339, share, ChainEvent, Observed, Severity, Signal};
+use crate::event::{rfc3339, share, ChainEvent, Observed, Severity, Signal, Subject};
 
 /// Held withdrawals and what happens to them. One incident per hold.
 #[derive(Default)]
@@ -34,6 +34,10 @@ impl Detector for LargeWithdrawal {
                 actions: actions.into(),
                 signature: ev.signature.clone(),
                 dedupe_key: format!("hold:{hold}"),
+                subject: Subject {
+                    hold: Some(hold.clone()),
+                    ..Default::default()
+                },
             }]
         };
         match e {

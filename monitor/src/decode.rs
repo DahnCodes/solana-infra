@@ -207,6 +207,95 @@ pub fn data_hash(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
+/// Breakglass `LimiterParams` (inside `ConfigAction::RaiseLimits`).
+#[derive(BorshDeserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LimiterParams {
+    pub window_secs: I64,
+    pub cap_absolute: U64,
+    pub cap_bps_of_vault: u16,
+    pub large_threshold: U64,
+    pub large_threshold_bps: u16,
+    pub hold_secs: I64,
+    pub auto_trip_secs: I64,
+    pub instant_allowance: U64,
+    pub screen_secs: I64,
+}
+
+/// Breakglass `PausePolicy` (inside `ConfigAction::ChangePolicy`).
+#[derive(BorshDeserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PausePolicy {
+    pub max_guardian_pause_secs: I64,
+    pub max_renewals: u8,
+    pub cooldown_secs: I64,
+    pub budget_secs_per_period: I64,
+    pub budget_period_secs: I64,
+    pub auto_trip_secs: I64,
+}
+
+/// Breakglass `ConfigAction`. Serializes like Anchor's TS coder:
+/// `{ "raiseLimits": { "mint": ..., "params": { ... } } }`.
+#[derive(BorshDeserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum ConfigAction {
+    RaiseLimits {
+        mint: Pk,
+        params: LimiterParams,
+    },
+    AddGuardian {
+        guardian: Pk,
+    },
+    SetAdmin {
+        admin: Pk,
+    },
+    ReleaseHeld {
+        hold: Pk,
+    },
+    ChangePolicy {
+        policy: PausePolicy,
+        unpausable_mask: U64,
+        timelock_secs: I64,
+    },
+}
+
+/// Breakglass `PendingConfig`, mirrored into the monitor's `pending_changes` table.
+#[derive(BorshDeserialize, Debug, Clone, PartialEq)]
+pub struct PendingConfig {
+    pub bump: u8,
+    pub config: Pk,
+    pub id: u64,
+    pub action: ConfigAction,
+    pub proposed_by: Pk,
+    pub proposed_at: i64,
+    pub executable_at: i64,
+    pub vetoed: bool,
+    pub executed: bool,
+    pub cancelled: bool,
+}
+
+impl PendingConfig {
+    pub fn decode(data: &[u8]) -> Option<Self> {
+        if data.len() < 8 || data[..8] != anchor_disc("account", "PendingConfig") {
+            return None;
+        }
+        Self::deserialize(&mut &data[8..]).ok()
+    }
+
+    /// pending | vetoed | executed | cancelled
+    pub fn status_str(&self) -> &'static str {
+        if self.cancelled {
+            "cancelled"
+        } else if self.executed {
+            "executed"
+        } else if self.vetoed {
+            "vetoed"
+        } else {
+            "pending"
+        }
+    }
+}
+
 /// `ConfigChangeProposed.action_kind` names.
 pub fn action_kind_name(kind: u8) -> &'static str {
     match kind {
@@ -263,6 +352,7 @@ mod tests {
                     let v = -(1_000_000 + i as i64);
                     (v.to_le_bytes().to_vec(), Value::String(v.to_string()))
                 }
+                "bool" => (vec![i % 2], Value::Bool(i % 2 == 1)),
                 other => panic!("IDL type {other} has no sample; extend this test and decode.rs"),
             },
             Value::Object(o) if o.contains_key("vec") => {
@@ -272,8 +362,110 @@ mod tests {
                 b.extend(&inner);
                 (b, Value::Array(vec![expected.clone(), expected]))
             }
+            Value::Object(o) if o.contains_key("defined") => {
+                let name = o["defined"]["name"].as_str().unwrap();
+                let idl = idl();
+                let ty = idl["types"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|t| t["name"] == name)
+                    .unwrap()
+                    .clone();
+                assert_eq!(
+                    ty["type"]["kind"], "struct",
+                    "{name}: enums are sampled per variant"
+                );
+                fields_sample(&ty["type"]["fields"], i)
+            }
             other => panic!("IDL type {other} not handled"),
         }
+    }
+
+    /// Borsh bytes and expected camelCase JSON object for a list of named IDL fields.
+    fn fields_sample(fields: &Value, base: u8) -> (Vec<u8>, Value) {
+        let mut bytes = vec![];
+        let mut json = serde_json::Map::new();
+        for (k, f) in fields.as_array().unwrap().iter().enumerate() {
+            let (b, v) = sample(&f["type"], base.wrapping_add(k as u8 + 1));
+            bytes.extend(b);
+            json.insert(camel(f["name"].as_str().unwrap()), v);
+        }
+        (bytes, Value::Object(json))
+    }
+
+    fn lower_first(s: &str) -> String {
+        let mut c = s.chars();
+        c.next()
+            .map(|f| f.to_lowercase().collect::<String>() + c.as_str())
+            .unwrap_or_default()
+    }
+
+    /// Every ConfigAction variant from the IDL decodes into the same JSON
+    /// Anchor's TS coder would produce, and PendingConfig's layout matches.
+    #[test]
+    fn config_action_and_pending_config_match_idl() {
+        let idl = idl();
+        let types = idl["types"].as_array().unwrap();
+        let ca = types.iter().find(|t| t["name"] == "ConfigAction").unwrap();
+        let variants = ca["type"]["variants"].as_array().unwrap();
+        assert_eq!(variants.len(), 5);
+        for (tag, v) in variants.iter().enumerate() {
+            let (body, fields) = fields_sample(&v["fields"], 10 * tag as u8);
+            let mut data = vec![tag as u8];
+            data.extend(body);
+            let decoded = ConfigAction::try_from_slice(&data)
+                .unwrap_or_else(|e| panic!("{}: {e}", v["name"]));
+            let expected = serde_json::json!({ lower_first(v["name"].as_str().unwrap()): fields });
+            assert_eq!(
+                serde_json::to_value(&decoded).unwrap(),
+                expected,
+                "{}",
+                v["name"]
+            );
+            assert_eq!(action_kind_name(tag as u8), v["name"].as_str().unwrap());
+        }
+
+        let pc = types.iter().find(|t| t["name"] == "PendingConfig").unwrap();
+        let names: Vec<&str> = pc["type"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "bump",
+                "config",
+                "id",
+                "action",
+                "proposed_by",
+                "proposed_at",
+                "executable_at",
+                "vetoed",
+                "executed",
+                "cancelled"
+            ]
+        );
+        let mut data = anchor_disc("account", "PendingConfig").to_vec();
+        data.push(1);
+        data.extend([4u8; 32]);
+        data.extend(7u64.to_le_bytes());
+        data.push(1); // AddGuardian
+        data.extend([5u8; 32]);
+        data.extend([6u8; 32]);
+        data.extend(100i64.to_le_bytes());
+        data.extend(200i64.to_le_bytes());
+        data.extend([1, 0, 0]);
+        let p = PendingConfig::decode(&data).unwrap();
+        assert_eq!((p.id, p.executable_at, p.status_str()), (7, 200, "vetoed"));
+        assert_eq!(
+            p.action,
+            ConfigAction::AddGuardian {
+                guardian: Pk([5; 32])
+            }
+        );
     }
 
     #[test]

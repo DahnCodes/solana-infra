@@ -58,6 +58,7 @@ impl Detector for Liveness {
                     actions: "Check the RPC endpoint; restart or replace it.".into(),
                     signature: None,
                     dedupe_key: format!("liveness:{source}:{n}"),
+                    subject: Default::default(),
                 });
             }
         }
@@ -73,6 +74,7 @@ impl Detector for Liveness {
                 actions: "Restore an RPC now. Consider pausing until monitoring is back.".into(),
                 signature: None,
                 dedupe_key: format!("liveness:all:{}", self.all_outages),
+                subject: Default::default(),
             });
         }
         out

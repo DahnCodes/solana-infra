@@ -174,7 +174,7 @@ What the program enforces, so a UI can disable buttons and explain errors before
 
 **Picking `holdNonce`:** the hold account must be in the transaction before the decision is known, so the client picks the nonce (any unused u64; `outflowAccounts()` uses a random one) and passes both the nonce and the hold PDA. An already-used nonce makes a held withdrawal fail.
 
-**test-vault's instructions** (the reference integration, `clients/ts/idl` has no test-vault types; read `target/idl/test_vault.json`): `initializeVault(disableInvariants: bool)` (must be `false` outside attack-test builds), `withdraw(amount, holdNonce)`, `claimHeld()` (also takes the user's `position`), `rejectHeld()` (admin). Breakglass accounts use a `bg` prefix (`bgConfig, bgPauseState, bgFlowLimiter, bgHold, bgEventAuthority`) plus `gateSigner`. A test-vault `Position` is `{ owner, vault, amount, held }`: `amount` is withdrawable now, `held` sits in queued or frozen holds and is still owed to the user.
+**test-vault's instructions** (the reference integration, `clients/ts/idl` has no test-vault types; read `target/idl/test_vault.json`): `initializeVault(disableInvariants: bool)` (must be `false` outside attack-test builds), `withdraw(amount, holdNonce)`, `claimHeld()` (also takes the user's `position`), `rejectHeld()` (admin), and `skim(amount)`, a planted-bug outflow with no gate that always fails with `SkimDisabled` in a normal build. Never call `skim` from a UI. Breakglass accounts use a `bg` prefix (`bgConfig, bgPauseState, bgFlowLimiter, bgHold, bgEventAuthority`) plus `gateSigner`. A test-vault `Position` is `{ owner, vault, amount, held }`: `amount` is withdrawable now, `held` sits in queued or frozen holds and is still owed to the user.
 
 **Every claim counts against the window.** If a claim would cross the cap, it auto-trips the scope and pays nothing (the hold stays `queued`); try again after the window frees up and the admin reopens the scope.
 
@@ -218,7 +218,7 @@ For a dashboard, prefer the monitor API (section 7). It dedupes across several R
 | `ConfigChangeCancelled` | config, change | The admin withdrew it | ✅ |
 | `LimitsTightened` | config, flowLimiter, mint | The admin tightened a limiter at once (no timelock) | ✅ |
 
-## 7. Monitor HTTP API (✅ Phase 5; `GET /pending-changes` 🔜 Phase 6)
+## 7. Monitor HTTP API (✅ Phases 5–6)
 
 An off-chain service in `monitor/`: JSON over HTTP, served by axum. This is the contract. Any change updates this section in the same commit, and `monitor/src/db_tests.rs` checks every response shape against it.
 
@@ -238,7 +238,8 @@ An off-chain service in `monitor/`: JSON over HTTP, served by axum. This is the 
 | `GET /holds?owner=&status=` | list of `Hold`, mirrored from `PendingWithdrawal` accounts and refreshed on every hold event (queued, frozen, released, rejected, claimed) |
 | `GET /events?kind=&since=` | list of `Event`. `kind` is an event name from section 6. `since` is RFC 3339 and compares against `block_time`. |
 | `GET /stream` | Server-Sent Events. Each message is `data: { "type": "event" \| "incident", "data": Event \| Incident }`: every new event, and every new or changed incident (created, more evidence, severity raised, acked). A client that falls behind skips what it missed, so re-fetch `GET /incidents` on reconnect. |
-| `GET /pending-changes` (🔜 Phase 6) | list of mirrored `PendingConfig` |
+| `GET /pending-changes?status=pending\|vetoed\|executed\|cancelled` | list of `PendingChange`, mirrored from `PendingConfig` accounts and refreshed on every config-change event |
+| `GET /actions?kind=pause\|freeze` | list of `Action`: everything the guardian bot attempted, including failures (e.g. `GuardianCooldown`) |
 
 ```ts
 type Severity = "info" | "warning" | "high" | "critical";
@@ -251,7 +252,15 @@ interface Event { id: string; kind: string /* Rust event name from section 6, e.
 interface Hold { address: string; owner: string; mint: string; amount: string; nonce: string;
   created_at: string; release_at: string; status: "queued" | "frozen" | "released" | "rejected" | "claimed" }
 interface Alert { id: string; sink: string; sent_at: string; ok: boolean }
+interface PendingChange { protocol: string; address: string; id: string /* u64 */; action_kind: "RaiseLimits" | "AddGuardian" | "SetAdmin" | "ReleaseHeld" | "ChangePolicy";
+  action: Record<string, unknown> /* Anchor enum form, e.g. { "setAdmin": { "admin": "..." } }; u64/i64 as strings */;
+  proposed_by: string; proposed_at: string; executable_at: string; status: "pending" | "vetoed" | "executed" | "cancelled" }
+interface Action { id: string; protocol: string; kind: "pause" | "freeze"; target: string /* hold address, or "scopes 0x2 for 3600s" */;
+  reason: string; triggered_by: string[] /* detector names */; signature: string | null;
+  ok: boolean; error: string | null /* e.g. "GuardianCooldown (6007)" */; at: string }
 ```
+
+Lists cover every protocol in the monitor's database (like incidents), so filter on `protocol` if one database serves several. `PendingChange.status` is computed from the account's flags: cancelled, then executed, then vetoed, else pending. A `pending` change past `executable_at` is ready for anyone to execute.
 
 **Event names:** `Event.kind` uses the **Rust struct name** (`Paused`, `LimitTripped`), unlike Anchor's TS coder, which reports camelCase (section 6). Field names in `data` are camelCase in both.
 
@@ -270,6 +279,11 @@ interface Alert { id: string; sink: string; sent_at: string; ok: boolean }
 - `config_change`: High for proposed/executed changes and guardian removal; Warning for vetoed/cancelled/tightened; Info for registration.
 - `program_upgrade`: Critical when either program's ProgramData changes.
 - `liveness`: High when one RPC goes silent; Critical when all do.
+- `fresh_address`: High when the withdrawing wallet was first seen less than `fresh_address_max_age_secs` ago (default 24h), its first transaction touched a configured mixer/bridge, or its history couldn't be checked.
+- `deposit_history`: High when a held withdrawal exceeds what the wallet deposited, minus what it already withdrew or holds. Only judged for watched vaults and wallets newer than the monitor's records.
+- `velocity_baseline`: High when a mint's hourly requested outflow (allowed + held) exceeds its 30-day hourly mean by 4σ, after at least 24h of history. Holds queued in that hour are flagged too.
+
+**Guardian bot** (Phase 6, `[bot] enabled`): it freezes any held withdrawal that `fresh_address`, `deposit_history` or `velocity_baseline` flags, and leaves clean ones to release on their own. It pauses the configured scopes on a `balance_delta` Critical alone, or on Criticals from 2 different detectors within 10 min. Its actions appear in `GET /actions` and as `HoldFrozen` / `Paused` events (`by` = the guardian key). In screen-all mode, a UI can show "frozen by the guardian" from those events.
 
 The API never signs anything. For admin actions it may later return unsigned or Squads-proposal transactions for the frontend to hand to a wallet.
 

@@ -20,7 +20,7 @@ use tower::ServiceExt;
 
 use crate::api::{router as api_router, ApiState};
 use crate::config::{AlertConfig, Routes};
-use crate::decode::{PendingWithdrawal, Pk};
+use crate::decode::{ConfigAction, PendingConfig, PendingWithdrawal, Pk};
 use crate::event::{Severity, Signal};
 use crate::health::Health;
 use crate::router::Router;
@@ -91,6 +91,7 @@ fn signal(sev: Severity, key: &str, sig: Option<&str>) -> Signal {
         actions: "a".into(),
         signature: sig.map(String::from),
         dedupe_key: key.into(),
+        subject: Default::default(),
     }
 }
 
@@ -714,4 +715,161 @@ async fn cors_only_for_configured_origins(pool: PgPool) {
         .await
         .unwrap();
     assert!(other.headers().get("access-control-allow-origin").is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_pending_changes(pool: PgPool) {
+    let (store, pid, _, _) = setup(pool).await;
+    let mut p = PendingConfig {
+        bump: 1,
+        config: Pk([1; 32]),
+        id: u64::MAX,
+        action: ConfigAction::SetAdmin { admin: Pk([5; 32]) },
+        proposed_by: Pk([2; 32]),
+        proposed_at: 1_800_000_000,
+        executable_at: 1_800_172_800,
+        vetoed: false,
+        executed: false,
+        cancelled: false,
+    };
+    store.upsert_pending(pid, "CHANGE1", &p).await.unwrap();
+    p.vetoed = true;
+    store.upsert_pending(pid, "CHANGE1", &p).await.unwrap(); // refreshed, not duplicated
+    let app = api(&store, None).await;
+    let (st, v) = call(&app, "GET", "/pending-changes", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(keys(&v), sorted(&["items", "next_cursor"]));
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    let c = &items[0];
+    assert_eq!(
+        keys(c),
+        sorted(&[
+            "protocol",
+            "address",
+            "id",
+            "action_kind",
+            "action",
+            "proposed_by",
+            "proposed_at",
+            "executable_at",
+            "status"
+        ])
+    );
+    assert_eq!(c["id"], u64::MAX.to_string());
+    assert_eq!(c["action_kind"], "SetAdmin");
+    assert_eq!(
+        c["action"],
+        json!({ "setAdmin": { "admin": Pk([5; 32]).to_string() } })
+    );
+    assert_eq!(c["status"], "vetoed");
+    assert_eq!(c["protocol"], "test-vault");
+    assert!(chrono::DateTime::parse_from_rfc3339(c["executable_at"].as_str().unwrap()).is_ok());
+    let (_, pending) = call(&app, "GET", "/pending-changes?status=pending", None, None).await;
+    assert_eq!(pending["items"].as_array().unwrap().len(), 0);
+    let (st, err) = call(&app, "GET", "/pending-changes?status=later", None, None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_error(&err, "bad_request");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_actions(pool: PgPool) {
+    let (store, pid, _, _) = setup(pool).await;
+    store
+        .insert_action(
+            pid,
+            "pause",
+            "scopes 0x2 for 3600s",
+            "balance_delta",
+            &["balance_delta".into()],
+            Some("SIG"),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_action(
+            pid,
+            "freeze",
+            "HOLD",
+            "fresh_address: t",
+            &["fresh_address".into()],
+            None,
+            false,
+            Some("GuardianCooldown (6007)"),
+        )
+        .await
+        .unwrap();
+    let app = api(&store, None).await;
+    let (st, v) = call(&app, "GET", "/actions", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let a = &items[0];
+    assert_eq!(
+        keys(a),
+        sorted(&[
+            "id",
+            "protocol",
+            "kind",
+            "target",
+            "reason",
+            "triggered_by",
+            "signature",
+            "ok",
+            "error",
+            "at"
+        ])
+    );
+    assert_eq!(
+        (a["kind"].as_str(), a["ok"].as_bool()),
+        (Some("freeze"), Some(false)),
+        "newest first"
+    );
+    assert_eq!(a["error"], "GuardianCooldown (6007)");
+    assert_eq!(a["signature"], Value::Null);
+    assert_eq!(items[1]["triggered_by"], json!(["balance_delta"]));
+    let (_, pauses) = call(&app, "GET", "/actions?kind=pause", None, None).await;
+    assert_eq!(pauses["items"].as_array().unwrap().len(), 1);
+    let (st, err) = call(&app, "GET", "/actions?kind=nuke", None, None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_error(&err, "bad_request");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn detector_seeds_come_back_from_the_store(pool: PgPool) {
+    let (store, pid, _, _) = setup(pool).await;
+    let owner = Pk([2; 32]).to_string();
+    let mint = Pk([3; 32]).to_string();
+    for (kind, amount) in [
+        ("deposit", 100),
+        ("outflow", 30),
+        ("claim", 10),
+        ("held", 50),
+    ] {
+        store
+            .insert_flow(pid, kind, &owner, &mint, amount, Some("s"))
+            .await
+            .unwrap();
+    }
+    store.upsert_hold(pid, "HOLD1", &hold(2, 0)).await.unwrap(); // queued, u64::MAX
+    let (books, holds) = store.deposit_seed(pid).await.unwrap();
+    let b = books
+        .iter()
+        .find(|(o, m, _)| *o == owner && *m == mint)
+        .unwrap()
+        .2;
+    assert_eq!(
+        (b.deposited, b.withdrawn, b.held),
+        (100, 40, u64::MAX as u128)
+    );
+    assert_eq!(holds.len(), 1);
+    let v = store.velocity_seed(pid).await.unwrap();
+    assert_eq!(v.len(), 1);
+    assert_eq!(
+        v[0].2, 80,
+        "allowed outflow + held; claims aren't counted twice"
+    );
+    assert!(store.history_start(pid).await.unwrap() > 1_700_000_000);
 }

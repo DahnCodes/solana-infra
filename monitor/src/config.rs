@@ -12,6 +12,8 @@ pub struct Config {
     pub alerts: AlertConfig,
     #[serde(default)]
     pub api: ApiConfig,
+    #[serde(default)]
+    pub bot: BotConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -42,10 +44,93 @@ pub struct DetectorConfig {
     /// How long a drop may stay unexplained (events arrive after account updates).
     #[serde(default = "default_balance_grace")]
     pub balance_grace_secs: u64,
+    /// A withdrawing wallet first seen less than this long ago is "fresh".
+    #[serde(default = "default_fresh_age")]
+    pub fresh_address_max_age_secs: u64,
+    /// Mixer/bridge addresses: a wallet whose first transaction touched one is flagged.
+    #[serde(default)]
+    pub flagged_funders: Vec<String>,
+    /// Hourly outflow above mean + sigma x std dev (30-day baseline) is flagged.
+    #[serde(default = "default_sigma")]
+    pub velocity_sigma: f64,
+    /// Hours of history needed before velocity judges anything.
+    #[serde(default = "default_min_hours")]
+    pub velocity_min_hours: u64,
 }
 
 fn default_balance_grace() -> u64 {
-    15
+    6
+}
+fn default_fresh_age() -> u64 {
+    86_400
+}
+fn default_sigma() -> f64 {
+    4.0
+}
+fn default_min_hours() -> u64 {
+    24
+}
+
+/// The guardian bot (Phase 6). Its key comes from GUARDIAN_KEYPAIR_PATH.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BotConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Scopes the bot pauses on an exploit signal ("all protected scopes").
+    #[serde(default = "default_pause_scopes")]
+    pub pause_scopes: Vec<u8>,
+    /// Pause length; at most the guardian maximum (24h by default).
+    #[serde(default = "default_pause_secs")]
+    pub pause_secs: i64,
+    /// Reason code written into the on-chain pause.
+    #[serde(default = "default_pause_reason")]
+    pub pause_reason: u16,
+    /// Criticals from 2 different detectors within this window trigger a pause.
+    #[serde(default = "default_critical_window")]
+    pub critical_window_secs: i64,
+    /// Detectors whose flag on a held withdrawal freezes it.
+    #[serde(default = "default_freeze_on")]
+    pub freeze_on: Vec<String>,
+    /// Hard cap on on-chain actions (pauses + freezes) per minute.
+    #[serde(default = "default_max_actions")]
+    pub max_actions_per_minute: u32,
+}
+
+fn default_pause_scopes() -> Vec<u8> {
+    vec![1]
+}
+fn default_pause_secs() -> i64 {
+    3_600
+}
+fn default_pause_reason() -> u16 {
+    100
+}
+fn default_critical_window() -> i64 {
+    600
+}
+fn default_freeze_on() -> Vec<String> {
+    vec![
+        "fresh_address".into(),
+        "velocity_baseline".into(),
+        "deposit_history".into(),
+    ]
+}
+fn default_max_actions() -> u32 {
+    10
+}
+
+impl Default for BotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pause_scopes: default_pause_scopes(),
+            pause_secs: default_pause_secs(),
+            pause_reason: default_pause_reason(),
+            critical_window_secs: default_critical_window(),
+            freeze_on: default_freeze_on(),
+            max_actions_per_minute: default_max_actions(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -151,6 +236,11 @@ impl Config {
             self.detectors.window_warning_pct < self.detectors.window_high_pct,
             "window_warning_pct must be below window_high_pct"
         );
+        anyhow::ensure!(
+            !self.bot.pause_scopes.is_empty() && self.bot.pause_scopes.iter().all(|s| *s < 64),
+            "bot.pause_scopes must be 1+ scope ids below 64"
+        );
+        anyhow::ensure!(self.bot.pause_secs > 0, "bot.pause_secs must be positive");
         Ok(())
     }
 
@@ -175,6 +265,9 @@ mod tests {
         assert_eq!(cfg.alerts.sinks, vec!["stdout".to_string()]);
         assert_eq!(cfg.network.rpc_urls.len(), 2, "example shows 2+ RPCs");
         assert_eq!(cfg.api.bind, "127.0.0.1:8080");
+        assert!(!cfg.bot.enabled, "the bot is opt-in");
+        assert_eq!(cfg.bot.pause_scopes, vec![1]);
+        assert_eq!(cfg.detectors.fresh_address_max_age_secs, 86_400);
     }
 
     #[test]

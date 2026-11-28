@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::Detector;
 use crate::decode::BgEvent;
-use crate::event::{ChainEvent, Observed, Severity, Signal};
+use crate::event::{ChainEvent, Observed, Severity, Signal, Subject};
 
 /// Warns when a mint's outflow window passes warning% / high% of its cap.
 /// Fires once per level until usage drops back below it.
@@ -57,6 +57,10 @@ impl Detector for WindowUsage {
                     .into(),
                 signature: ev.signature.clone(),
                 dedupe_key: format!("window:{mint}"),
+                subject: Subject {
+                    mint: Some(mint.clone()),
+                    ..Default::default()
+                },
             }],
             _ => vec![],
         }

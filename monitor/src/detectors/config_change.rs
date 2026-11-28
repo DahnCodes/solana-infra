@@ -29,6 +29,7 @@ impl Detector for ConfigChange {
                 actions,
                 signature: ev.signature.clone(),
                 dedupe_key: key,
+                subject: Default::default(),
             }]
         };
         match e {

@@ -208,6 +208,27 @@ pub mod test_vault {
         Ok(())
     }
 
+    /// PLANTED BUG (attack tests only): an outflow that skips Breakglass
+    /// entirely, like a forgotten admin or migration instruction. It exists to
+    /// test the monitor's balance-delta detector and the guardian bot. In a
+    /// default build it always fails with `SkimDisabled`.
+    pub fn skim(ctx: Context<Skim>, amount: u64) -> Result<()> {
+        #[cfg(not(feature = "planted-bug"))]
+        {
+            let _ = (&ctx, amount);
+            return err!(VaultError::SkimDisabled);
+        }
+        #[cfg(feature = "planted-bug")]
+        transfer_out(
+            &ctx.accounts.vault,
+            &ctx.accounts.vault_token,
+            &ctx.accounts.mint,
+            &ctx.accounts.to,
+            &ctx.accounts.token_program,
+            amount,
+        )
+    }
+
     /// The Breakglass admin rejects a hold; the amount goes back to the
     /// owner's position.
     pub fn reject_held(ctx: Context<RejectHeld>) -> Result<()> {
@@ -473,6 +494,20 @@ pub struct RejectHeld<'info> {
     pub breakglass_program: Program<'info, Breakglass>,
 }
 
+/// Accounts for the planted-bug `skim`: no Breakglass accounts at all.
+#[derive(Accounts)]
+pub struct Skim<'info> {
+    pub caller: Signer<'info>,
+    pub mint: Account<'info, Mint>,
+    #[account(seeds = [VAULT_SEED, mint.key().as_ref()], bump = vault.bump, has_one = mint)]
+    pub vault: Account<'info, Vault>,
+    #[account(mut, seeds = [VAULT_TOKEN_SEED, vault.key().as_ref()], bump)]
+    pub vault_token: Account<'info, TokenAccount>,
+    #[account(mut, token::mint = mint)]
+    pub to: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
+}
+
 #[error_code]
 pub enum VaultError {
     #[msg("Withdraw exceeds user position")]
@@ -485,4 +520,6 @@ pub enum VaultError {
     WrongHold,
     #[msg("Invariants can only be disabled in a planted-bug test build")]
     InvariantsRequired,
+    #[msg("skim exists only in a planted-bug test build")]
+    SkimDisabled,
 }

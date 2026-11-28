@@ -1,13 +1,14 @@
-//! Ingest messages -> dedupe -> store -> detectors -> router.
+//! Ingest messages -> dedupe -> store -> detectors -> router (and the guardian bot).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
-use crate::decode::{data_hash, token_account};
+use crate::decode::{data_hash, token_account, BgEvent};
+use crate::detectors::hold_request;
 use crate::detectors::Detector;
-use crate::event::{now_secs, ChainEvent, Observed};
+use crate::event::{now_secs, ChainEvent, Observed, Signal};
 use crate::health::Health;
 use crate::ingest::{AccountKind, Ingest, Seen};
 use crate::router::{Router, StreamMsg};
@@ -21,6 +22,8 @@ pub struct Pipeline {
     pub seen: Arc<Seen>,
     pub health: Health,
     pub stream: broadcast::Sender<StreamMsg>,
+    /// Every signal also goes to the guardian bot, if it runs.
+    pub bot: Option<mpsc::Sender<Signal>>,
     /// Newest slot applied per watched account (drops stale/duplicate updates).
     last_slot: HashMap<String, u64>,
 }
@@ -43,6 +46,7 @@ impl Pipeline {
             seen,
             health,
             stream,
+            bot: None,
             last_slot: HashMap::new(),
         }
     }
@@ -55,8 +59,27 @@ impl Pipeline {
         for d in self.detectors.iter_mut() {
             signals.extend(d.observe(ev));
         }
+        self.dispatch(signals).await;
+    }
+
+    async fn dispatch(&mut self, signals: Vec<Signal>) {
         for s in signals {
+            if let Some(bot) = &self.bot {
+                if bot.try_send(s.clone()).is_err() {
+                    tracing::error!(dedupe_key = %s.dedupe_key, "guardian bot queue full or closed; signal not acted on");
+                }
+            }
             self.router.handle(s).await;
+        }
+    }
+
+    async fn flow(&self, kind: &str, owner: &str, mint: &str, amount: u64, sig: &str) {
+        if let Err(e) = self
+            .store
+            .insert_flow(self.protocol_id, kind, owner, mint, amount, Some(sig))
+            .await
+        {
+            tracing::warn!(error = %e, "could not record flow");
         }
     }
 
@@ -66,16 +89,43 @@ impl Pipeline {
             Ingest::Tx {
                 source,
                 signature,
-                slot,
-                block_time,
-                events,
-                holds,
+                data,
             } => {
                 if !self.seen.insert(&signature) {
                     return; // another RPC delivered it first
                 }
-                for (i, e) in events.into_iter().enumerate() {
-                    let data = e.data_json();
+                let obs = |event| Observed {
+                    source: source.clone(),
+                    signature: Some(signature.clone()),
+                    slot: data.slot,
+                    received_at: now,
+                    event,
+                };
+                // Context first: who the withdrawing wallets are, what was deposited.
+                for (wallet, first_seen, flagged_funder) in &data.wallets {
+                    self.detect(&obs(ChainEvent::WalletProfile {
+                        wallet: wallet.clone(),
+                        first_seen: *first_seen,
+                        flagged_funder: flagged_funder.clone(),
+                    }))
+                    .await;
+                }
+                for (owner, mint, vault, amount) in &data.deposits {
+                    self.flow("deposit", owner, mint, *amount, &signature).await;
+                    self.detect(&obs(ChainEvent::Deposit {
+                        owner: owner.clone(),
+                        mint: mint.clone(),
+                        vault: vault.clone(),
+                        amount: *amount,
+                    }))
+                    .await;
+                }
+                let is_claim = data
+                    .events
+                    .iter()
+                    .any(|e| matches!(e, BgEvent::HoldResolved(r) if r.outcome == 0));
+                for (i, e) in data.events.iter().cloned().enumerate() {
+                    let json = e.data_json();
                     match self
                         .store
                         .insert_event(
@@ -83,9 +133,9 @@ impl Pipeline {
                             e.name(),
                             &signature,
                             i as u32,
-                            slot,
-                            block_time,
-                            &data,
+                            data.slot,
+                            data.block_time,
+                            &json,
                         )
                         .await
                     {
@@ -98,18 +148,34 @@ impl Pipeline {
                         Ok(None) => {}
                         Err(err) => tracing::warn!(error = %err, "could not store event"),
                     }
-                    let ev = Observed {
-                        source: source.clone(),
-                        signature: Some(signature.clone()),
-                        slot,
-                        received_at: now,
-                        event: ChainEvent::Breakglass(e),
-                    };
-                    self.detect(&ev).await;
+                    if let BgEvent::OutflowRecorded(o) = &e {
+                        let kind = if is_claim { "claim" } else { "outflow" };
+                        self.flow(
+                            kind,
+                            &o.owner.to_string(),
+                            &o.mint.to_string(),
+                            o.amount.0,
+                            &signature,
+                        )
+                        .await;
+                    } else if let Some(h) = hold_request(&e) {
+                        self.flow("held", &h.owner, &h.mint, h.amount, &signature)
+                            .await;
+                    }
+                    self.detect(&obs(ChainEvent::Breakglass(e))).await;
                 }
-                for (address, h) in holds {
-                    if let Err(err) = self.store.upsert_hold(self.protocol_id, &address, &h).await {
+                for (address, h) in &data.holds {
+                    if let Err(err) = self.store.upsert_hold(self.protocol_id, address, h).await {
                         tracing::warn!(error = %err, "could not mirror hold");
+                    }
+                }
+                for (address, p) in &data.pending {
+                    if let Err(err) = self
+                        .store
+                        .upsert_pending(self.protocol_id, address, p)
+                        .await
+                    {
+                        tracing::warn!(error = %err, "could not mirror pending change");
                     }
                 }
             }
@@ -174,8 +240,6 @@ impl Pipeline {
         for d in self.detectors.iter_mut() {
             signals.extend(d.tick(now));
         }
-        for s in signals {
-            self.router.handle(s).await;
-        }
+        self.dispatch(signals).await;
     }
 }
