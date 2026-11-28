@@ -3,11 +3,14 @@ import { describe, it } from "node:test";
 import type { PendingConfig, PendingWithdrawal } from "./accounts.ts";
 import type { BreakglassEventRecord } from "./events.ts";
 import {
+  canCancel,
   canClaim,
   canExecute,
   canFreeze,
   canPause,
+  canPropose,
   canProposeRelease,
+  canRemoveGuardian,
   canReject,
   canRenew,
   canUnpause,
@@ -95,6 +98,68 @@ describe("permissions", () => {
     );
     assert.equal(canVeto("guardian", change()).allowed, true);
     assert.equal(canVeto("admin", change()).allowed, false);
+  });
+});
+
+describe("role matrix", () => {
+  it("gives each role exactly its powers (roles table in CLAUDE.md)", () => {
+    const frozen = hold({ status: "frozen" });
+    const matrix = (["admin", "guardian", "user", null] as const).map(
+      (role) => ({
+        role,
+        freeze: canFreeze(role, hold()).allowed,
+        reject: canReject(role, hold()).allowed,
+        release: canProposeRelease(role, frozen, null).allowed,
+        veto: canVeto(role, change()).allowed,
+        cancel: canCancel(role, change()).allowed,
+        remove: canRemoveGuardian(role).allowed,
+        propose: canPropose(role).allowed,
+      }),
+    );
+    assert.deepEqual(matrix, [
+      {
+        role: "admin",
+        freeze: true,
+        reject: true,
+        release: true,
+        veto: false,
+        cancel: true,
+        remove: true,
+        propose: true,
+      },
+      {
+        role: "guardian",
+        freeze: true,
+        reject: false,
+        release: false,
+        veto: true,
+        cancel: false,
+        remove: false,
+        propose: false,
+      },
+      {
+        role: "user",
+        freeze: false,
+        reject: false,
+        release: false,
+        veto: false,
+        cancel: false,
+        remove: false,
+        propose: false,
+      },
+      {
+        role: null,
+        freeze: false,
+        reject: false,
+        release: false,
+        veto: false,
+        cancel: false,
+        remove: false,
+        propose: false,
+      },
+    ]);
+    // Anyone with a wallet can execute a change once its timelock ends.
+    assert.equal(canExecute("anyone", change(), 100).allowed, true);
   });
 });
 

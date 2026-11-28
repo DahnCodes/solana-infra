@@ -16,9 +16,10 @@ export function explainError(error: unknown): string {
 }
 
 /**
- * One write behind a permission check: disabled with the reason when it
- * isn't allowed (or hidden, for actions that don't apply), a spinner while
- * it is in flight, and a toast when it settles.
+ * One write behind a permission check. Role awareness (step 4.9):
+ * - not `relevant` (the role can never do this here): not shown at all;
+ * - relevant but not allowed right now: disabled, with the reason beside it;
+ * - allowed: a spinner while in flight, then a toast.
  */
 export function ActionButton({
   label,
@@ -26,7 +27,7 @@ export function ActionButton({
   icon,
   variant,
   permission,
-  hideWhenDenied = false,
+  relevant = true,
   run,
   onDone,
 }: {
@@ -36,20 +37,21 @@ export function ActionButton({
   icon?: ReactNode;
   variant?: ButtonVariant;
   permission: Permission;
-  hideWhenDenied?: boolean;
+  /** Whether the current role could ever take this action here. */
+  relevant?: boolean;
   run: (client: BreakglassClient) => Promise<unknown>;
   onDone?: (result: unknown) => void;
 }) {
   const toast = useToast();
   const write = useWrite(run);
-  if (!permission.allowed && hideWhenDenied) return null;
-  return (
+  if (!relevant) return null;
+
+  const button = (
     <Button
       variant={variant}
       icon={icon}
       pending={write.pending}
       disabled={!permission.allowed}
-      title={permission.allowed ? undefined : permission.reason}
       onClick={async () => {
         try {
           const result = await write.run();
@@ -80,5 +82,13 @@ export function ActionButton({
     >
       {label}
     </Button>
+  );
+
+  if (permission.allowed) return button;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+      {button}
+      <span className="text-body text-ink-muted">{permission.reason}</span>
+    </span>
   );
 }

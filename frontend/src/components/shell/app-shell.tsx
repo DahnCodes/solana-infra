@@ -7,6 +7,7 @@ import { NetworkBadge } from "@/components/network/network-badge";
 import { WalletButton } from "@/components/wallet/wallet-button";
 import { DemoControls } from "./demo-controls";
 import { Logo } from "./logo";
+import { RoleBadge } from "./role-badge";
 import { SideNav } from "./side-nav";
 
 /**
@@ -53,6 +54,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Logo hideNameOnPhone />
             </Link>
             <div className="ml-auto flex items-center gap-3">
+              <span className="max-md:hidden">
+                <RoleBadge />
+              </span>
               <span className="max-sm:hidden">
                 <NetworkBadge />
               </span>
@@ -68,8 +72,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               }}
               className="flex max-h-[calc(100dvh-4rem)] flex-col gap-6 overflow-y-auto border-t border-line px-4 pt-4 pb-6 sm:px-6 lg:hidden"
             >
-              <span className="sm:hidden">
-                <NetworkBadge />
+              <span className="flex flex-wrap gap-2 md:hidden">
+                <RoleBadge />
+                <span className="sm:hidden">
+                  <NetworkBadge />
+                </span>
               </span>
               <SideNav onNavigate={close} />
               <DemoControls />

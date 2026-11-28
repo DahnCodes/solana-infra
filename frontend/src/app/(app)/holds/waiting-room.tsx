@@ -298,7 +298,7 @@ function HoldRow({
           label="Claim"
           done="Claimed"
           permission={canClaim(wallet, h, now, scopePaused)}
-          hideWhenDenied
+          relevant={wallet === h.owner && isOpen(h)}
           run={(c) => c.claimHeld(args)}
         />
         <ActionButton
@@ -306,7 +306,9 @@ function HoldRow({
           done="Hold frozen"
           icon={<Snowflake aria-hidden className="size-4" />}
           permission={canFreeze(role, h)}
-          hideWhenDenied
+          relevant={
+            (role === "guardian" || role === "admin") && h.status === "queued"
+          }
           run={(c) => c.freezeHeld(args)}
         />
         <ActionButton
@@ -314,7 +316,7 @@ function HoldRow({
           done="Hold rejected: the funds are back in the position"
           icon={<Undo2 aria-hidden className="size-4" />}
           permission={canReject(role, h)}
-          hideWhenDenied
+          relevant={role === "admin" && isOpen(h)}
           run={(c) => c.rejectHeld(args)}
         />
         <ActionButton
@@ -326,7 +328,7 @@ function HoldRow({
             h,
             pendingRelease?.account ?? null,
           )}
-          hideWhenDenied
+          relevant={role === "admin" && h.status === "frozen"}
           run={(c) => c.releaseHeld(args)}
         />
         {pendingRelease && (
@@ -334,7 +336,6 @@ function HoldRow({
             label="Execute the release"
             done="Release executed: the hold can be claimed"
             permission={canExecute(wallet, pendingRelease.account, now)}
-            hideWhenDenied
             run={(c) =>
               c.executeConfig({ config, change: pendingRelease.address })
             }

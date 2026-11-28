@@ -235,7 +235,7 @@ function PausesCard({
                         done={`${scopeLabel(scope)} pause extended`}
                         icon={<RotateCw aria-hidden className="size-4" />}
                         permission={canRenew(ctx, mask)}
-                        hideWhenDenied={role === "user" || role === null}
+                        relevant={role === "admin" || role === "guardian"}
                         run={(c) => c.renewPause({ config, scopes: mask })}
                       />
                       <ActionButton
@@ -243,7 +243,7 @@ function PausesCard({
                         done={`${scopeLabel(scope)} reopened`}
                         icon={<Play aria-hidden className="size-4" />}
                         permission={canUnpause(ctx, mask)}
-                        hideWhenDenied={role === "user" || role === null}
+                        relevant={role === "admin" || role === "guardian"}
                         run={(c) => c.unpause({ config, scopes: mask })}
                       />
                       <Badge status="tripped">Paused</Badge>
@@ -447,7 +447,7 @@ function GuardiansCard({
                 done="Guardian removed"
                 icon={<ShieldOff aria-hidden className="size-4" />}
                 permission={canRemoveGuardian(role)}
-                hideWhenDenied
+                relevant={role === "admin"}
                 run={(c) => c.removeGuardian({ config, guardian: g })}
               />
             </li>
@@ -535,7 +535,7 @@ function ChangesCard({
                       label="Veto"
                       done="Change vetoed"
                       permission={canVeto(role, a)}
-                      hideWhenDenied
+                      relevant={role === "guardian"}
                       run={(cl) => cl.vetoConfig(args)}
                     />
                     <ActionButton
@@ -543,7 +543,7 @@ function ChangesCard({
                       variant="quiet"
                       done="Change cancelled"
                       permission={canCancel(role, a)}
-                      hideWhenDenied
+                      relevant={role === "admin"}
                       run={(cl) => cl.cancelConfig(args)}
                     />
                   </div>
