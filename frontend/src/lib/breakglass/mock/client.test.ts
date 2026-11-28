@@ -565,6 +565,47 @@ describe("setup on an empty chain", () => {
   });
 });
 
+describe("demo programs", () => {
+  it("lets a wallet register a program it deployed, with a limiter", async () => {
+    const me = "Regist3rMe11111111111111111111111111111111";
+    client.setWallet(me);
+    const demo = await client.createDemoProgram();
+    const args = {
+      protectedProgram: demo.program,
+      admin: me,
+      guardians: [W.guardian.address],
+      unpausableMask: BigInt(0),
+      timelockSecs: 36 * H,
+    };
+    client.setWallet(W.user.address); // not the upgrade authority
+    await rejects(
+      client.initializeConfig({ ...args, admin: W.user.address }),
+      "Unauthorized",
+    );
+    client.setWallet(me);
+    await client.initializeConfig(args);
+    const cfg = (await client.getConfig(demo.program))!;
+    assert.equal(cfg.account.timelockSecs, 36 * H);
+    await client.initFlowLimiter({
+      config: cfg.address,
+      mint: demo.mint,
+      vault: demo.vault,
+      scope: 1,
+      capAbsolute: usdc(50_000),
+      capBpsOfVault: 1000,
+      largeThreshold: usdc(20_000),
+      largeThresholdBps: 0,
+      windowSecs: null,
+      holdSecs: null,
+      autoTripSecs: null,
+      instantAllowance: null,
+      screenSecs: null,
+    });
+    assert.equal((await client.listFlowLimiters(cfg.address)).length, 1);
+    assert.equal((await client.listConfigs()).length, 2);
+  });
+});
+
 describe("test-token faucet", () => {
   it("funds a brand-new wallet so it can deposit", async () => {
     const newcomer = "NewJudgeWa11et1111111111111111111111111111";

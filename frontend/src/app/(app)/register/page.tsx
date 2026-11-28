@@ -1,20 +1,17 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/page-header";
-import { PlannedScreen } from "@/components/planned-screen";
+import { RegisterFlow } from "./register-flow";
 
 export const metadata: Metadata = { title: "Register a protocol · Breakglass" };
 
-export default function RegisteraprotocolPage() {
+export default function RegisterPage() {
   return (
     <>
       <PageHeader
         title="Register a protocol"
-        description="Put a protocol behind the gate."
+        description="Put a protocol behind the gate: who guards it, what can never be paused, and how much can leave per window."
       />
-      <PlannedScreen
-        step="4.3"
-        what="Register a protocol (guardians, unpausable scopes, timelock) and set up a limiter for each token."
-      />
+      <RegisterFlow />
     </>
   );
 }

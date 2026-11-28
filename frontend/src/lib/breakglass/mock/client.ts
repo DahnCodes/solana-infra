@@ -135,6 +135,34 @@ export class MockClient implements BreakglassClient {
   }
 
   /**
+   * "Deploys" a fresh demo program whose upgrade authority is the connected
+   * wallet, so the register flow can be tried end to end. Returns the program
+   * plus a token mint and a vault token account holding 500,000 tokens.
+   */
+  async createDemoProgram(): Promise<{
+    program: Address;
+    mint: Address;
+    vault: Address;
+  }> {
+    await this.delay();
+    if (!this.wallet) {
+      throw clientError("Connect a wallet first.", {
+        errorName: "WalletNotConnected",
+      });
+    }
+    const n = this.engine.programAuthorities.size + 1;
+    const program = mockAddress(
+      `demo-program:${this.wallet}:${n}:${this.now()}`,
+    );
+    const mint = this.options.testVault.mint;
+    const vault = mockAddress(`ata:${program}:${mint}`);
+    this.engine.programAuthorities.set(program, this.wallet);
+    this.engine.balances.set(vault, BigInt(500_000) * BigInt(1_000_000));
+    this.notify();
+    return { program, mint, vault };
+  }
+
+  /**
    * The test-token faucet: credits mock USDC to the connected wallet's token
    * account, so a new wallet can deposit and withdraw at once.
    */

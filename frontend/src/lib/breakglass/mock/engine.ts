@@ -125,6 +125,8 @@ export class MockEngine {
   positions = new Map<string, Position>();
   events: BreakglassEventRecord[] = [];
   incidents: IncidentDetail[] = [];
+  /** Demo programs "deployed" in the mock, and who their upgrade authority is. */
+  programAuthorities = new Map<Address, Address>();
 
   constructor(testVault: TestVault) {
     this.testVault = testVault;
@@ -243,7 +245,7 @@ export class MockEngine {
       const authority =
         args.protectedProgram === this.testVault.program
           ? this.testVault.upgradeAuthority
-          : null;
+          : (this.programAuthorities.get(args.protectedProgram) ?? null);
       require(ctx.signer === authority &&
         ctx.signer === args.admin, "Unauthorized");
       require(args.guardians.length <= MAX_GUARDIANS, "TooManyGuardians");

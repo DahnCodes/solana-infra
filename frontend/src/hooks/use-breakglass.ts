@@ -175,6 +175,7 @@ export function useMockControls() {
     advanceClock: (seconds: number) => mock.advanceClock(seconds),
     reset: () => mock.reset(),
     requestTestTokens: (amount: bigint) => mock.requestTestTokens(amount),
+    createDemoProgram: () => mock.createDemoProgram(),
     testVault: mock.testVault,
   };
 }
