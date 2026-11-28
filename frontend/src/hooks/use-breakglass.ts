@@ -2,12 +2,7 @@
 
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useSyncExternalStore } from "react";
-import type {
-  Address,
-  HoldStatus,
-  IncidentStatus,
-  ProtocolConfig,
-} from "@/lib/breakglass";
+import type { Address, HoldStatus, IncidentStatus } from "@/lib/breakglass";
 import { getMockClient } from "@/lib/breakglass/create-client";
 import { MOCK_WALLETS } from "@/lib/breakglass/mock/seed";
 import { env } from "@/lib/env";
@@ -149,18 +144,7 @@ export function useConnectedWallet(): Address | null {
   return env.dataMode === "mock" ? mockWallet : (publicKey?.toBase58() ?? null);
 }
 
-export type Role = "admin" | "guardian" | "user";
-
-/** What the wallet is to this protocol. A wallet that is both acts as admin. */
-export function roleOf(
-  config: ProtocolConfig | undefined,
-  wallet: Address | null,
-): Role | null {
-  if (!config || !wallet) return null;
-  if (wallet === config.admin) return "admin";
-  if (config.guardians.includes(wallet)) return "guardian";
-  return "user";
-}
+export { roleOf, type Role } from "@/lib/breakglass/permissions";
 
 /**
  * The demo's protected protocol (the test vault): its program, vault
