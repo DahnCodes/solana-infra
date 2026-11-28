@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `5.3 Loading, empty and error states`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `Checkpoint A notes`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -121,6 +121,19 @@ src/
 - **5.1** done: every write goes through `TxProvider` / `useTx().send()` (`src/components/tx/tx-provider.tsx`, in the `(app)` layout): a confirm dialog with a question, a plain one- or two-sentence summary, key details and "Your wallet will ask you to sign", then the write and a toast. `ActionButton` takes a `confirm` prop; the withdraw, deposit, claim, pause and propose forms call `send` directly; the withdraw confirmation repeats the gate's expected answer. The register flow's own review step is its summary. `useWrite` and the temporary `/mock` page and `PlannedScreen` were removed (every screen exists now). `signs: false` marks writes with nothing to sign (incident acknowledge).
 - **5.2** done: each write shows one toast that changes in place: pending (spinner, "Waiting for the network to confirm…", stays up), then confirmed (the outcome plus `TxLink`) or failed (the reason in words, "Nothing changed."). `TxLink` opens Solana Explorer in live mode (`src/lib/explorer.ts`, tested: devnet, mainnet, localnet via custom URL); in mock mode it shows the short signature marked "mock, not on chain" because mock signatures aren't on any explorer. `ToastProvider` gained `update`, `dismiss` and `persist`.
 - **5.3** done: every panel has loading, empty and error states. `useClientQuery` returns `retry`; `src/components/query-state.tsx` has `Skeleton`, `ErrorNote` (what failed, why, Try again), `QueryStatus` (skeleton, error, or "showing the last known data" note; pair with `query.data !== undefined && …`) and `QueryView`. `useChainClock()` exposes the clock read's error. Rule: an unread value is never shown as a default (no "Open" scopes, "0" balances or "first withdrawal" flags without data). `MockClient.setOutage(on)` makes every read fail; the sidebar's demo box has "Simulate an RPC outage" to show it.
+
+### Checkpoint A (reached Nov 28; waiting for the human to confirm)
+
+The backend branch moved from `e52f9cd` (Phase 3, what the frontend was built against) to `ec4ce46` (Phases 4 timelocks, 5 monitor, 6 guardian bot). `clients/ts/idl` now covers every Breakglass instruction the frontend needs. After the human confirms checkpoint A, align the frontend with it (do this in 5.4 or a short type-refresh step first):
+
+- `PendingConfig` gains `proposedBy` and `cancelled`; cancel keeps the account and sets `cancelled` (the mock deletes it today). State order: cancelled, executed, vetoed, waiting, ready.
+- `ConfigAction`: `raiseLimits { mint, params: LimiterParams }` (all 9 limiter settings, not our 4) and `changePolicy { policy, unpausableMask, timelockSecs }`. Others match ours.
+- New instruction `tighten_limits(params: LimiterParams)`: admin, applies at once if every field is equal or stricter, else `NotTightening`. Not yet in `BreakglassClient` or the UI.
+- `initialize_config`: only payer + upgrade authority sign; `admin` is any pubkey (a Squads vault). The register form fixes admin to the connected wallet; make it an input. `propose_config` takes `payer` + `admin`.
+- No `release_held` instruction: release is `propose_config({ releaseHeld })` then `execute_config` (our mock already does this). `execute_config` needs `flowLimiter` for raiseLimits and `hold` for releaseHeld.
+- New events `ConfigChangeCancelled`, `LimitsTightened`; new errors 6026 to 6030 (`NotTightening`, `DuplicateGuardian`, `ChangeClosed`, `WrongChangeAccounts`, `InvalidPolicy`) with FRONTEND.md wording.
+- Monitor (live): `Event.kind` uses Rust struct names ("LimitTripped"), not camelCase; detectors are `pause_trip`, `large_withdrawal`, `window_usage`, `balance_delta`, `config_change`, `program_upgrade`, `liveness`, `fresh_address`, `deposit_history`, `velocity_baseline`; new `GET /pending-changes?status=`, `GET /actions` (guardian bot), `GET /stream` (SSE); ack returns 409 if not open and 401 without the token.
+- Open questions for the backend (asked at checkpoint A): the test vault's IDL isn't in `clients/ts/idl` (needed for withdraw, claim, reject through the protocol); the test vault has no deposit instruction in FRONTEND.md; `init_flow_limiter` emits no event; how the frontend branch should consume `clients/ts` (merge the backend branch, path dependency, or copy the IDL).
 
 ## The checklist
 
