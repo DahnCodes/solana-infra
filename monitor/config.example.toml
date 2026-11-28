@@ -55,4 +55,4 @@ pause_secs = 3600
 pause_reason = 100
 critical_window_secs = 600
 freeze_on = ["fresh_address", "velocity_baseline", "deposit_history"]
-max_actions_per_minute = 10
+max_actions_per_minute = 120

@@ -2,6 +2,10 @@
 // ANCHOR_WALLET (defaults: local validator, ~/.config/solana/id.json), the two
 // programs, test-vault registered with Breakglass (the wallet is admin and
 // upgrade authority), and a fresh vault + user per run.
+//
+// Off localnet (ANCHOR_PROVIDER_URL not 127.0.0.1/localhost), new wallets are
+// funded by transfer from the wallet instead of airdrops (devnet's faucet is
+// rate-limited). Housekeeping messages go to stderr.
 
 import * as fs from "fs";
 import * as os from "os";
@@ -12,6 +16,9 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
 } from "@solana/web3.js";
 import {
   createMint,
@@ -70,17 +77,42 @@ export async function setup() {
   );
 
   // Register test-vault with Breakglass (once per validator).
-  // A local demo guardian (gitignored under .anchor/), registered with the
-  // config so demos can veto and freeze. Adding one later takes the 48h timelock.
+  // Two local demo guardians (gitignored under .anchor/), registered with the
+  // config, because adding one later takes the 48h timelock. The first is the
+  // guardian bot's key; the second plays the rogue guardian in the attack suite.
   const guardian = loadOrCreateKeypair(
     path.join(__dirname, "../.anchor/demo-guardian-keypair.json"),
   );
+  const guardian2 = loadOrCreateKeypair(
+    path.join(__dirname, "../.anchor/demo-guardian2-keypair.json"),
+  );
+  const isLocal = /\/\/(127\.0\.0\.1|localhost)[:/]/.test(url);
+
+  /** Give `to` SOL: an airdrop on localnet, a transfer from the wallet elsewhere. */
+  async function fund(to: PublicKey, lamports = LAMPORTS_PER_SOL) {
+    if (isLocal) {
+      await connection.confirmTransaction(
+        await connection.requestAirdrop(to, lamports),
+        "confirmed",
+      );
+    } else {
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: payer.publicKey,
+            toPubkey: to,
+            lamports,
+          }),
+        ),
+      );
+    }
+  }
 
   const existing = await bg.account.protocolConfig.fetchNullable(config);
   if (!existing) {
     await bg.methods
       .initializeConfig({
-        guardians: [guardian.publicKey],
+        guardians: [guardian.publicKey, guardian2.publicKey],
         unpausableMask: new BN(1).shln(REPAY),
         timelockSecs: null,
       })
@@ -95,30 +127,29 @@ export async function setup() {
         ),
       })
       .rpc();
-    console.log(`registered test-vault, config ${config.toBase58()}`);
+    console.error(`registered test-vault, config ${config.toBase58()}`);
   } else if (!existing.admin.equals(payer.publicKey)) {
     throw new Error(
       `config admin is ${existing.admin.toBase58()}, not this wallet`,
     );
   }
 
+  type LimiterOpts = {
+    cap: BN;
+    threshold: BN;
+    holdSecs: BN | null;
+    instantAllowance?: BN | null;
+    screenSecs?: BN | null;
+  };
+
   /**
-   * A fresh mint, vault and limiter, and a user who deposited `deposit` base
-   * units. `addUser(deposit)` adds more depositors to the same vault.
-   * `instantAllowance: 0` turns on screen-all; `invariantsOff` only works on
-   * a planted-bug build of test-vault.
+   * A fresh mint, vault and limiter. `instantAllowance: 0` turns on
+   * screen-all; `invariantsOff` only works on a planted-bug build of test-vault.
    */
-  async function newVault(
-    limiter: {
-      cap: BN;
-      threshold: BN;
-      holdSecs: BN | null;
-      instantAllowance?: BN | null;
-      screenSecs?: BN | null;
-    },
-    deposit: BN,
+  async function createVault(
+    limiter: LimiterOpts,
     opts: { invariantsOff?: boolean } = {},
-  ) {
+  ): Promise<PublicKey> {
     const mint = await createMint(connection, payer, payer.publicKey, null, 6);
     const vault = pda(
       [Buffer.from("vault"), mint.toBuffer()],
@@ -158,15 +189,34 @@ export async function setup() {
         flowLimiter,
       })
       .rpc();
+    return mint;
+  }
 
-    let n = new BN(Date.now()).muln(1000);
+  /** Handles for an existing vault (by its mint): PDAs and `addUser`. */
+  function vaultFor(mint: PublicKey) {
+    const vault = pda(
+      [Buffer.from("vault"), mint.toBuffer()],
+      vaultProgram.programId,
+    );
+    const vaultToken = pda(
+      [Buffer.from("vault_token"), vault.toBuffer()],
+      vaultProgram.programId,
+    );
+    const flowLimiter = pda([
+      Buffer.from("flow"),
+      config.toBuffer(),
+      mint.toBuffer(),
+    ]);
+    let n = new BN(Date.now())
+      .muln(1000)
+      .addn(Math.floor(Math.random() * 1000));
 
     /** A funded user who deposits `amount` into this vault. */
     async function addUser(amount: BN) {
       const user = Keypair.generate();
-      await connection.confirmTransaction(
-        await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL),
-        "confirmed",
+      await fund(
+        user.publicKey,
+        isLocal ? LAMPORTS_PER_SOL : LAMPORTS_PER_SOL / 20,
       );
       const userToken = (
         await getOrCreateAssociatedTokenAccount(
@@ -226,6 +276,23 @@ export async function setup() {
           .rpc();
         return { sig, hold };
       }
+      /** A withdraw instruction (for batching or tampering), and its hold PDA. */
+      async function withdrawIx(
+        amount: BN,
+        overrides: Record<string, PublicKey> = {},
+      ) {
+        n = n.addn(1);
+        const hold = holdFor(n);
+        const ix = await vaultProgram.methods
+          .withdraw(amount, n)
+          .accountsPartial({ ...common, bgHold: hold, ...overrides })
+          .instruction();
+        return { ix, hold };
+      }
+      /** Send instructions in one transaction signed by this user. */
+      async function send(ixs: TransactionInstruction[]) {
+        return provider.sendAndConfirm(new Transaction().add(...ixs), [user]);
+      }
       async function claim(hold: PublicKey) {
         return vaultProgram.methods
           .claimHeld()
@@ -247,11 +314,24 @@ export async function setup() {
           .signers([user])
           .rpc();
       }
-      return { user, userToken, withdraw, claim, skim };
+      return { user, userToken, withdraw, withdrawIx, send, claim, skim };
     }
 
-    const first = await addUser(deposit);
-    return { ...first, mint, vault, vaultToken, flowLimiter, addUser };
+    return { mint, vault, vaultToken, flowLimiter, addUser };
+  }
+
+  /**
+   * A fresh vault (see `createVault`) and a user who deposited `deposit`
+   * base units. `addUser(deposit)` adds more depositors to the same vault.
+   */
+  async function newVault(
+    limiter: LimiterOpts,
+    deposit: BN,
+    opts: { invariantsOff?: boolean } = {},
+  ) {
+    const v = vaultFor(await createVault(limiter, opts));
+    const first = await v.addUser(deposit);
+    return { ...first, ...v };
   }
 
   /** Lift any running pause on WITHDRAW (admin) so the demo starts clean. */
@@ -267,7 +347,7 @@ export async function setup() {
         .unpause(new BN(1).shln(WITHDRAW))
         .accountsPartial({ authority: payer.publicKey, config, pauseState })
         .rpc();
-      console.log(
+      console.error(
         "(WITHDRAW was paused from an earlier run: unpaused it first)",
       );
     }
@@ -275,8 +355,12 @@ export async function setup() {
 
   return {
     connection,
+    provider,
     payer,
     guardian,
+    guardian2,
+    fund,
+    isLocal,
     guardianRegistered: async () =>
       (await bg.account.protocolConfig.fetch(config)).guardians.some((g) =>
         g.equals(guardian.publicKey),
@@ -286,6 +370,8 @@ export async function setup() {
     config,
     pauseState,
     newVault,
+    createVault,
+    vaultFor,
     reopenWithdraw,
   };
 }

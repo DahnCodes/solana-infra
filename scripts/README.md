@@ -15,6 +15,6 @@ Helper and demo scripts that you run by hand against a local validator or devnet
 | `monitor-e2e.ts` | 5 | `yarn monitor:e2e`: monitor end to end (two RPCs, alerts within 5s, RPC killed) |
 | `attack-screened.ts` | 6 | Guardian bot freezes a fresh wallet's screened withdrawals |
 | `bot-e2e.ts` | 6 | `yarn bot:e2e`: screening, balance-delta pause, cooldown handling (planted-bug build) |
-| `attacks/*.ts` | 7 | Full attack suite, `yarn test:attacks` |
+| `attacks/*.ts`, `attacks/run.sh` | 7 | The six-attack suite: `yarn test:attacks` (localnet), or one by one on devnet (docs/DEVNET.md) |
 
 Run with: `yarn ts-node scripts/<name>.ts` (local validator running, programs deployed).

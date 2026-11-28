@@ -102,7 +102,16 @@ cargo run -- --config config.toml
 
 The monitor watches the Breakglass and protected programs over 2+ RPCs and pages on every event that matters, plus unexplained vault drops, program upgrades and dead RPCs. It serves the admin API on `http://127.0.0.1:8080` (see [`docs/FRONTEND.md`](docs/FRONTEND.md) section 7). End-to-end check against a local validator: `yarn ts-node scripts/monitor-e2e.ts`.
 
-## 5. Run things by hand on a local validator
+## 5. Attack suite and CI
+
+```bash
+docker compose -f monitor/docker-compose.yml up -d   # Postgres for the monitor
+yarn test:attacks                                     # six attacks against a fresh validator: expect 6/6 PASS
+```
+
+CI (`.github/workflows/ci.yml`) runs the lint, the contract drift check, every test suite and the attack suites on each push to `backend`. To run the attacks on devnet with live alerts, follow [`docs/DEVNET.md`](docs/DEVNET.md).
+
+## 6. Run things by hand on a local validator
 
 ```bash
 solana-test-validator --reset     # terminal 1: leave running
@@ -128,7 +137,7 @@ The backend is built so a frontend can plug in without reading Rust:
 
 1. Read [`docs/FRONTEND.md`](docs/FRONTEND.md). Each instruction, account, event and endpoint is marked live (✅) or planned (🔜, with the phase that adds it).
 2. Use the TypeScript client in `clients/ts`. It has the generated IDL and types (`clients/ts/idl/`), PDA helpers, scope masks, the error code table and event decoding.
-3. Run a local validator with the programs deployed (section 5) and point the app at `http://127.0.0.1:8899`.
+3. Run a local validator with the programs deployed (section 6) and point the app at `http://127.0.0.1:8899`.
 
 Every phase keeps the contract in sync. `scripts/sync-client.sh` refreshes the IDL and fails if the client or the doc drifted from the program. In CI, `scripts/sync-client.sh --check` does the same check.
 

@@ -29,6 +29,7 @@ pub fn hold_request(e: &BgEvent) -> Option<HoldRequest> {
 }
 
 mod balance_delta;
+mod blocked_exploit;
 mod config_change;
 mod deposit_history;
 mod fresh_address;
@@ -40,6 +41,7 @@ mod velocity_baseline;
 mod window_usage;
 
 pub use balance_delta::BalanceDelta;
+pub use blocked_exploit::BlockedExploit;
 pub use config_change::ConfigChange;
 pub use deposit_history::{Books, DepositHistory};
 pub use fresh_address::FreshAddress;
@@ -85,6 +87,7 @@ pub fn default_set(
     deposits.seed(seeds.books, seeds.holds);
     vec![
         Box::new(PauseTrip),
+        Box::new(BlockedExploit),
         Box::new(LargeWithdrawal::default()),
         Box::new(WindowUsage::new(
             cfg.window_warning_pct,

@@ -11,7 +11,7 @@ Claude Code updates this file at the end of every phase (see docs/BUILD_PLAN.md)
 | 4 Timelocks | Done (2026-11-27) | `cargo test -p breakglass` (43 passing), `anchor test` (48 passing incl. 7 LiteSVM clock-warp tests), `yarn ts-node scripts/demo-timelock.ts` | See Phase 4 notes |
 | 5 Monitor v1 | Done (2026-11-27) | `cd monitor && cargo test` (44 passing, needs Postgres), `yarn monitor:e2e` (localnet + Postgres) | See Phase 5 notes |
 | 6 Guardian bot and screening | Done (2026-11-28) | `cd monitor && cargo test` (69 passing, needs Postgres), `yarn bot:e2e` (planted-bug build), `yarn ts-node scripts/attack-screened.ts` | See Phase 6 notes |
-| 7 Attack suite and CI | Not started | | |
+| 7 Attack suite and CI | Done (2026-11-28) | `yarn test:attacks` (6/6 PASS), `.github/workflows/ci.yml`, `docs/DEVNET.md` | See Phase 7 notes |
 | 8 Upgrade vault and co-signer (optional) | Not started | | |
 
 ## Phase 0 notes
@@ -345,12 +345,61 @@ The e2e uses a 60s fresh-wallet threshold (default 24h) so the "normal" user can
 - The KMS/HSM signer: the trait is in place; the file signer is for local dev only.
 - The "admin multisig" subscription (from Phase 5) is still open.
 
+## Phase 7 notes
+
+**Built:**
+- **Attack suite** (`scripts/attacks/`, `yarn test:attacks` → `run.sh`):
+  - `run.sh` builds test-vault with `planted-bug` and starts a fresh validator with both programs preloaded as upgradeable (wallet = upgrade authority).
+  - `setup.ts` creates every attack's vault, each with a victim's 10,000-token deposit, so one shared monitor and bot watch them all.
+  - It runs the six attacks, prints `N/6 PASS`, exits non-zero unless all pass, and always stops what it started and rebuilds the safe test-vault.
+  - Each attack prints one `PASS: ...` / `FAIL: ...` line on stdout (progress on stderr) and checks alerts through the monitor API.
+
+  | Attack | What it does | Pass (all observed in the last run) |
+  | --- | --- | --- |
+  | `bypass-check` | withdraw without the Breakglass accounts; with a fake PauseState (system account, wrong account type) and another mint's limiter; then `skim` through the unprotected path | the gate attempts all fail, 0 taken; skim → Critical `balance_delta` and the bot pauses WITHDRAW within 10s |
+  | `big-drain` | 9,000 tokens against a 100-token position through the bug: guarded vault (invariants on), and screened vault (invariants off, screen-all) | reverted with `InvariantViolated` (Critical `blocked_exploit` alert); the screened one held, flagged and frozen before release; 0 taken |
+  | `many-small` | 240 sub-threshold withdrawals from 10 wallets, 4 per transaction until a batch fails, then single; plus 20 in screen-all mode | 1,000 tokens taken = the cap, then the trip; alerts at 50%, 80% and the trip; zero-loss mode: 20/20 frozen, 0 taken |
+  | `rogue-guardian` | guardian 2 spams pauses (25h, then a second pause), over-renews, tries to unpause an auto-trip, propose/tighten config, remove the other guardian, reject someone's hold; then the admin removes it | every abuse refused with the right error; its pause ends within 72h and its budget holds; after removal it can't pause |
+  | `stolen-admin` | the admin key proposes unlimited limits, a thief guardian, a thief admin, releasing a frozen hold, a looser policy; then upgrades test-vault | each change: `TimelockActive`, alerted (`config_change`), vetoed (`Vetoed`); the frozen hold stays frozen; 0 taken; upgrade → Critical `program_upgrade` |
+  | `monitor-outage` | its own monitor behind a TCP proxy; the proxy is killed; 5 wallets drain through the bug | High liveness + Critical "all watchers silent"; the gate alone held the take to the 1,000-token cap |
+- **Monitor:** new `blocked_exploit` detector (Critical), fed by the logs of failed transactions on the watched programs that fail with `InvariantViolated` (`ingest::BLOCKING_ERRORS`). The bot's default `max_actions_per_minute` is now 120 (was 10), so a screen-all flood can be frozen in time.
+- **demo-common:**
+  - registers two guardians (the bot's key, plus `.anchor/demo-guardian2-keypair.json` for the rogue attack)
+  - funds wallets by transfer off localnet
+  - `createVault` / `vaultFor` reuse vaults; `withdrawIx` / `send` batch or tamper with withdrawals
+- **CI** (`.github/workflows/ci.yml`):
+  - Postgres 16 service; installs Solana 2.1.21 and Anchor 0.31.1 (avm), with caching
+  - lint, `anchor build`, `scripts/sync-client.sh --check`, `clients/ts` build, Rust tests
+  - then `anchor keys sync` (the runner's own program keys), `anchor test`, `yarn test:attack`, `yarn test:attacks`, and `cd monitor && cargo test`
+- **`docs/DEVNET.md`:** deploy, register, run the monitor (2 RPCs, Telegram, bot), run the attacks with live pages, re-run and clean-up notes, and a results table.
+
+**Test commands:**
+```bash
+docker compose -f monitor/docker-compose.yml up -d
+yarn test:attacks        # 6/6 PASS, ~6 min (stop any validator/monitor on 8899/18090 first)
+```
+
+**Findings from building the suite:**
+- **A drain that only gets simulated is invisible.** If an attacker simulates first (Anchor and most wallets do), the invariant revert never lands and nothing on-chain shows it; but nothing is taken. Exploit scripts usually skip simulation, and then the failed transaction lands and `blocked_exploit` pages Critical. big-drain sends without preflight for that reason.
+- **The bot gets one pause per 6h.** After its pause, the guardian's own on-chain cooldown stops it pausing again. If the admin lifts that pause and the exploit continues, only the admin (or a second guardian) can pause. This is the spec's griefing limit working as designed, but it should be in the ops runbook: a second guardian key, or a second bot with its own key, closes the gap.
+- **Batched withdrawals can't make a trip stick.** If several withdrawals in one transaction cross the cap mid-transaction, the later ones are denied and the *whole* transaction reverts, trip included. The attacker gains nothing (the crossing withdrawal was held), and has to fall back to single withdrawals, which trip for real.
+
+**Deferred:**
+- **monitor-outage on devnet:** the TCP-proxy trick needs a plain-HTTP RPC, so it runs on localnet; DEVNET.md says so.
+- **"Queue an upgrade" in stolen-admin** is only alerted, not delayed: delaying upgrades is the optional Phase 8 upgrade vault, as the spec's non-goals say.
+- **The devnet run itself** (results table in DEVNET.md) is the human's manual check.
+- **CI on GitHub** hasn't run yet as of this note; see the commit message / PR checks.
+- **One unexplained `anchor test` failure:** in one of about 15 runs this session, outflow's `before all` hook failed (31 passing, the 17 outflow tests skipped). Three immediate reruns passed, and every other run passed. The error wasn't captured, so it isn't diagnosed. If CI hits it, the log will show which setup call failed (airdrop, mint or vault creation).
+
 ## Decisions
 
 (Ambiguities resolved during the build, with the reason.)
 
 - 2026-11-27 (Phase 0): `Cargo.lock`, `yarn.lock` and `clients/ts/yarn.lock` are committed. Without a lockfile cargo resolved crates that need edition 2024 (`blake3 1.8` → `digest 0.11` → `block-buffer 0.12`), which the Solana 2.1 platform-tools (cargo 1.79) can't build.
 - 2026-11-27 (Phase 0): the on-chain crates declare `rust-version = "1.79"`, so `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` keeps to compatible versions. `blake3` is pinned to 1.5.5 in `Cargo.lock` because 1.8.x doesn't declare an MSRV. If a future `cargo update` breaks `anchor build`, re-pin it with `cargo update -p blake3 --precise 1.5.5`.
+- 2026-11-28 (Phase 7): **the suite runs one shared monitor + bot for five attacks, and creates every vault up front** (the monitor's vault list is fixed at startup). monitor-outage runs its own monitor, because it has to kill that monitor's ingestors. bypass-check runs first because the bot's pause is a one-per-6h resource.
+- 2026-11-28 (Phase 7): **CI checks the committed contract with the committed program IDs, then uses its own keys.** Program keypairs are never committed, so a CI runner can't deploy at the committed IDs. The drift check runs before `anchor keys sync` and catches a stale IDL or client; everything that deploys runs after it.
+- 2026-11-28 (Phase 7): **"move funds" in rogue-guardian means resolving someone's held withdrawal.** No Breakglass instruction moves funds, so the closest a guardian can get is rejecting another user's hold, which needs the admin.
 - 2026-11-28 (Phase 6): **screening checks are detectors, and the bot only acts on their signals.** Every rule stays pure and unit-testable, the same evidence pages humans, and the bot holds no screening logic of its own, just the policy that maps signals to guardian actions.
 - 2026-11-28 (Phase 6): **an unverifiable wallet counts as fresh** (fail closed). If its history can't be fetched, the hold is frozen, and the admin can still reject it or release it through the timelock. A false freeze costs a delay; a missed attacker costs the funds.
 - 2026-11-28 (Phase 6): **`deposit_history` only judges what it can see completely**: mints whose vault is watched, and wallets first seen after the monitor's records began (the protocol row's `created_at`). For older wallets, or unwatched vaults, missing deposits would flag honest users, so it stays quiet and `fresh_address` and `velocity_baseline` still apply.
@@ -413,6 +462,7 @@ The e2e uses a 60s fresh-wallet threshold (default 24h) so the "normal" user can
 
 - 2026-11-27 (Phase 0): program IDs changed from the starter IDs to `breakglass` = `AiMhNgDgXLQ68FhZrYczUiGxDxDeDxNFDTurqNFPP5kB`, `test_vault` = `2orgNn8kfHVQi8EMxa86zntq8BbwQefXPtpZiQTfgPyn`. Read the ID from the IDL's `address` field rather than hard-coding it.
 - 2026-11-27 (Phase 1): `PauseState` grows from 16 to 64 entries (`MAX_ACTIVE_PAUSES`), and a scope can now have several entries. Account size is 2925 bytes (was 765). Nothing is deployed yet, so there is no migration. Frontends must use `isScopePaused` / `pausedMask` rather than assuming one entry per scope.
+- 2026-11-28 (Phase 7): new detector name `blocked_exploit` in `incident.detector` (non-breaking). The demo/attack config registration now has two guardians (local tooling only).
 - 2026-11-28 (Phase 6): monitor API additions (non-breaking): `GET /pending-changes`, `GET /actions`, and new detector names in `incident.detector` (`fresh_address`, `deposit_history`, `velocity_baseline`). test-vault gains `skim` and the `SkimDisabled` error (appended). Breakglass itself is unchanged.
 - 2026-11-27 (Phase 5): the monitor API went live as specified in FRONTEND.md section 7. Details settled now: `Event.kind` is PascalCase; `Event.data` uses camelCase with u64/i64 as strings; ack errors are 401/400/404/409; lists are newest first; `/stream` messages are `{type, data}` JSON in SSE `data:` lines.
 - 2026-11-27 (Phase 4): `PendingConfig` layout replaced: `action_kind: u8` + `action_data: bytes` become `action: ConfigAction`, plus `proposed_by` and `cancelled`. It was never live before, so no migration.

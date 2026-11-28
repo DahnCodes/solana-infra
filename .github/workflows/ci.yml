@@ -1,0 +1,129 @@
+# CI for the Breakglass backend: programs, TypeScript client, attack suites, monitor.
+#
+# Program IDs: the repo commits the project owner's IDs (Anchor.toml, lib.rs,
+# clients/ts/idl), but never the program keypairs. So CI first checks the
+# committed IDL and client against a build with the committed IDs, then
+# switches to this runner's own keys (`anchor keys sync`) for everything that
+# deploys.
+name: ci
+
+on:
+  push:
+    branches: [backend, main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOLANA_VERSION: 2.1.21
+  ANCHOR_VERSION: 0.31.1
+  DATABASE_URL: postgres://breakglass:breakglass@localhost:5432/breakglass
+  CARGO_TERM_COLOR: always
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: breakglass
+          POSTGRES_PASSWORD: breakglass
+          POSTGRES_DB: breakglass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U breakglass"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            clients/ts/yarn.lock
+
+      - name: Cache Rust, Solana and Anchor toolchains and builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/avm
+            ~/.avm
+            ~/.cache/solana
+            ~/.local/share/solana
+            target
+            monitor/target
+          key: ${{ runner.os }}-sol${{ env.SOLANA_VERSION }}-anchor${{ env.ANCHOR_VERSION }}-${{ hashFiles('Cargo.lock', 'monitor/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-sol${{ env.SOLANA_VERSION }}-anchor${{ env.ANCHOR_VERSION }}-
+
+      - name: Install Solana CLI
+        run: |
+          if [ ! -x "$HOME/.local/share/solana/install/releases/$SOLANA_VERSION/solana-release/bin/solana" ]; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/v$SOLANA_VERSION/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor (avm)
+        run: |
+          if ! command -v avm >/dev/null; then
+            cargo install --git https://github.com/coral-xyz/anchor --tag v$ANCHOR_VERSION avm --locked
+          fi
+          avm install $ANCHOR_VERSION || true
+          avm use $ANCHOR_VERSION
+          echo "$HOME/.avm/bin" >> "$GITHUB_PATH"
+
+      - name: Tool versions and wallet
+        run: |
+          anchor --version
+          solana --version
+          node --version
+          solana-keygen new --no-bip39-passphrase --silent --force -o ~/.config/solana/id.json
+          solana config set --url localhost
+
+      - name: Install JS dependencies
+        run: |
+          yarn install --frozen-lockfile
+          (cd clients/ts && yarn install --frozen-lockfile)
+
+      - name: Lint
+        run: yarn lint
+
+      # ---- contract checks against the committed program IDs ----------------
+      - name: Build (committed program IDs)
+        run: anchor build
+
+      - name: Client in sync with the program (IDL, errors, seeds, docs)
+        run: scripts/sync-client.sh --check
+
+      - name: Build the TypeScript client
+        run: cd clients/ts && yarn build
+
+      - name: Rust unit and property tests
+        run: cargo test -p breakglass -p breakglass-sdk
+
+      # ---- everything that deploys uses this runner's keys -----------------
+      - name: Use this runner's program keys
+        run: |
+          anchor keys sync
+          anchor build
+          node scripts/gen-fixtures.js
+
+      - name: Integration tests (anchor test)
+        run: anchor test --skip-build
+
+      - name: Planted-bug suite (yarn test:attack)
+        run: yarn test:attack
+
+      - name: Attack suite (yarn test:attacks)
+        run: yarn test:attacks
+
+      - name: Monitor tests (unit + Postgres)
+        run: cd monitor && cargo test

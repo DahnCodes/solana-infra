@@ -28,6 +28,8 @@ pub enum ChainEvent {
         vault: String,
         amount: u64,
     },
+    /// A transaction a safety check reverted (see `ingest::BLOCKING_ERRORS`).
+    Blocked { reason: String },
     /// What the monitor knows about a wallet that just withdrew.
     /// `first_seen`: block time of its oldest transaction found (None: lookup failed).
     /// `flagged_funder`: a configured mixer/bridge address in that first transaction.

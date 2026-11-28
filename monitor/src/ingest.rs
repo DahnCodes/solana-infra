@@ -60,6 +60,25 @@ pub enum Ingest {
         source: String,
         slot: u64,
     },
+    /// A failed transaction whose logs show a safety check stopped it
+    /// (e.g. `InvariantViolated`): an exploit attempt that left no event.
+    Blocked {
+        source: String,
+        signature: String,
+        slot: u64,
+        reason: String,
+    },
+}
+
+/// Error names that mean "a safety check stopped this transaction".
+pub const BLOCKING_ERRORS: [&str; 1] = ["InvariantViolated"];
+
+/// The blocking error named in a failed transaction's logs, if any.
+pub fn blocking_error(logs: &[String]) -> Option<&'static str> {
+    BLOCKING_ERRORS.into_iter().find(|name| {
+        logs.iter()
+            .any(|l| l.contains(&format!("Error Code: {name}.")))
+    })
 }
 
 /// Everything the monitor takes from one transaction.
@@ -188,7 +207,8 @@ pub fn spawn(
 }
 
 enum Item {
-    Logs(String, bool),
+    /// (signature, succeeded, slot, logs)
+    Logs(String, bool, u64, Vec<String>),
     Slot(u64),
     Account(Pubkey, AccountKind, u64, Option<Vec<u8>>),
 }
@@ -219,8 +239,15 @@ async fn run(
             )
             .await?;
         streams.push(
-            s.map(|r| Item::Logs(r.value.signature, r.value.err.is_none()))
-                .boxed(),
+            s.map(|r| {
+                Item::Logs(
+                    r.value.signature,
+                    r.value.err.is_none(),
+                    r.context.slot,
+                    r.value.logs,
+                )
+            })
+            .boxed(),
         );
     }
     let (slots, _unsub) = ps.slot_subscribe().await?;
@@ -270,8 +297,22 @@ async fn run(
     let mut last_beat = std::time::Instant::now() - Duration::from_secs(10);
     while let Some(item) = merged.next().await {
         match item {
-            Item::Logs(sig, ok) => {
-                if !ok || seen.contains(&sig) {
+            Item::Logs(sig, ok, slot, logs) => {
+                if seen.contains(&sig) {
+                    continue;
+                }
+                if !ok {
+                    if let Some(reason) = blocking_error(&logs) {
+                        let msg = Ingest::Blocked {
+                            source: source.into(),
+                            signature: sig,
+                            slot,
+                            reason: reason.into(),
+                        };
+                        if out.send(msg).await.is_err() {
+                            return Ok(());
+                        }
+                    }
                     continue;
                 }
                 let (rpc, watch, out, seen, source) = (
@@ -650,5 +691,20 @@ mod tests {
         assert_eq!(w.accounts.len(), 3);
         assert_eq!(w.accounts[0].1, AccountKind::Vault);
         assert!(matches!(w.accounts[2].1, AccountKind::ProgramData { .. }));
+    }
+
+    #[test]
+    fn blocked_transactions_are_recognized_from_logs() {
+        let logs = vec![
+            "Program log: invariant violated: BalanceNotMatchingClaim".to_string(),
+            "Program log: AnchorError occurred. Error Code: InvariantViolated. Error Number: 6017."
+                .to_string(),
+        ];
+        assert_eq!(blocking_error(&logs), Some("InvariantViolated"));
+        let other = vec![
+            "Program log: AnchorError occurred. Error Code: ScopePaused. Error Number: 6000."
+                .to_string(),
+        ];
+        assert_eq!(blocking_error(&other), None);
     }
 }

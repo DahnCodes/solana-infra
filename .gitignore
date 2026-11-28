@@ -13,6 +13,10 @@ yarn-error.log
 # Monitor
 monitor/target/
 monitor/.env
+# Real monitor configs can hold RPC URLs with provider API keys.
+monitor/config.toml
+monitor/config.*.toml
+!monitor/config.example.toml
 
 # Keys: NEVER commit keypairs
 *-keypair.json

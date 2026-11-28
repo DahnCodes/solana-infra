@@ -278,6 +278,7 @@ Lists cover every protocol in the monitor's database (like incidents), so filter
 - `balance_delta`: Critical for a vault drop no `OutflowRecorded` explains.
 - `config_change`: High for proposed/executed changes and guardian removal; Warning for vetoed/cancelled/tightened; Info for registration.
 - `program_upgrade`: Critical when either program's ProgramData changes.
+- `blocked_exploit`: Critical when a transaction on the protected program lands but fails with `InvariantViolated`. Someone tried to take funds the protocol's books don't allow; nothing moved.
 - `liveness`: High when one RPC goes silent; Critical when all do.
 - `fresh_address`: High when the withdrawing wallet was first seen less than `fresh_address_max_age_secs` ago (default 24h), its first transaction touched a configured mixer/bridge, or its history couldn't be checked.
 - `deposit_history`: High when a held withdrawal exceeds what the wallet deposited, minus what it already withdrew or holds. Only judged for watched vaults and wallets newer than the monitor's records.

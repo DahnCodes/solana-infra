@@ -220,6 +220,24 @@ impl Pipeline {
                 };
                 self.detect(&ev).await;
             }
+            Ingest::Blocked {
+                source,
+                signature,
+                slot,
+                reason,
+            } => {
+                if !self.seen.insert(&signature) {
+                    return;
+                }
+                let ev = Observed {
+                    source,
+                    signature: Some(signature),
+                    slot,
+                    received_at: now,
+                    event: ChainEvent::Blocked { reason },
+                };
+                self.detect(&ev).await;
+            }
             Ingest::Heartbeat { source, slot } => {
                 self.health.beat(&source, slot, now);
                 let ev = Observed {

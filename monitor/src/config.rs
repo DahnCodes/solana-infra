@@ -91,7 +91,9 @@ pub struct BotConfig {
     /// Detectors whose flag on a held withdrawal freezes it.
     #[serde(default = "default_freeze_on")]
     pub freeze_on: Vec<String>,
-    /// Hard cap on on-chain actions (pauses + freezes) per minute.
+    /// Hard cap on on-chain actions (pauses + freezes) per minute. Pauses are
+    /// already throttled by the policy, so this mostly bounds freezes, which a
+    /// many-small attack in screen-all mode can need dozens of.
     #[serde(default = "default_max_actions")]
     pub max_actions_per_minute: u32,
 }
@@ -116,7 +118,7 @@ fn default_freeze_on() -> Vec<String> {
     ]
 }
 fn default_max_actions() -> u32 {
-    10
+    120
 }
 
 impl Default for BotConfig {

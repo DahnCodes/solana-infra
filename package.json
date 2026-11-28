@@ -8,7 +8,7 @@
     "test:attack": "scripts/test-attack.sh",
     "monitor:e2e": "ts-node scripts/monitor-e2e.ts",
     "bot:e2e": "ts-node scripts/bot-e2e.ts",
-    "test:attacks": "echo 'Added in Phase 7' && exit 1",
+    "test:attacks": "scripts/attacks/run.sh",
     "client:sync": "scripts/sync-client.sh",
     "client:check": "node scripts/check-client-drift.js"
   },
