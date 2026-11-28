@@ -15,7 +15,7 @@ import { Button } from "@/components/button";
 import { Countdown } from "@/components/countdown";
 import { Input } from "@/components/input";
 import { InsetPanel, Panel } from "@/components/panel";
-import { useToast } from "@/components/toast";
+import { useTx } from "@/components/tx/tx-provider";
 import {
   useChainNow,
   useConnectedWallet,
@@ -28,17 +28,14 @@ import {
   useTestVault,
   useTokenBalance,
 } from "@/hooks/use-breakglass";
-import { useWrite } from "@/hooks/use-write";
 import type {
   AccountRecord,
   Address,
-  ClientError,
   FlowLimiter,
   PendingWithdrawal,
   WithdrawResult,
 } from "@/lib/breakglass";
 import { formatSpan, scopeLabel } from "@/lib/breakglass/describe";
-import { isClientError } from "@/lib/breakglass/errors";
 import { walletTokenAccount } from "@/lib/breakglass/mock/engine";
 import { effectiveThreshold } from "@/lib/breakglass/rules/limiter";
 import { runningPauses } from "@/lib/breakglass/rules/pauses";
@@ -48,24 +45,6 @@ import {
 } from "@/lib/breakglass/rules/predict";
 import { formatDateTime, formatUnits, parseUnits } from "@/lib/format";
 import { tokenInfo } from "@/lib/tokens";
-
-/** Plain words for the failures these forms can hit (5.4 covers the rest). */
-function explain(error: unknown): string {
-  if (!isClientError(error)) return "Something went wrong. Try again.";
-  const e = error as ClientError;
-  switch (e.errorName) {
-    case "ScopePaused":
-      return "This action is paused for safety right now.";
-    case "InsufficientPosition":
-      return "That's more than you can withdraw.";
-    case "InsufficientFunds":
-      return "That's more than your wallet holds.";
-    case "WalletNotConnected":
-      return "Connect a wallet first.";
-    default:
-      return e.message;
-  }
-}
 
 /** Deposit into and withdraw from the test vault, through the gate. */
 export function VaultForms() {
@@ -200,7 +179,6 @@ function WithdrawForm({
   limiter: FlowLimiter;
   now: number;
 }) {
-  const toast = useToast();
   const token = tokenInfo(limiter.mint);
   const position = usePosition(vault, wallet);
   const pauses = usePauseState(config);
@@ -231,34 +209,43 @@ function WithdrawForm({
         )
       : null;
 
-  const withdraw = useWrite((c) =>
-    c.withdraw({ vault, amount: amount ?? BigInt(0) }),
-  );
+  const tx = useTx();
+  const [sending, setSending] = useState(false);
 
   const send = async () => {
+    if (!amount) return;
+    const value = amount;
+    const shown = `${formatUnits(value, token.decimals)} ${token.symbol}`;
     setFailure(null);
     setResult(null);
-    try {
-      const r = await withdraw.run();
-      setResult(r);
-      setText("");
-      toast.show(
-        r.decision === "allow"
+    const r = await tx.send({
+      title: `Withdraw ${shown}?`,
+      summary: `The test vault asks the gate before paying out. ${prediction ? expectation(prediction, limiter, now) : ""}`,
+      details: [
+        { label: "Amount", value: shown },
+        { label: "From", value: "Your position in the test vault" },
+        {
+          label: "Expected",
+          value: prediction ? shortExpectation(prediction) : "…",
+        },
+      ],
+      confirmLabel: "Withdraw",
+      onStart: () => setSending(true),
+      onError: setFailure,
+      run: (c) => c.withdraw({ vault, amount: value }),
+      done: (res) =>
+        res.decision === "allow"
           ? { tone: "open", title: "Withdrawal sent" }
           : {
               tone: "held",
               title: "Withdrawal held",
-              description: `Claimable ${formatDateTime(r.releaseAt)}.`,
+              description: `Claimable ${formatDateTime(res.releaseAt)}.`,
             },
-      );
-    } catch (error) {
-      const message = explain(error);
-      setFailure(message);
-      toast.show({
-        tone: "tripped",
-        title: "Withdrawal denied",
-        description: message,
-      });
+    });
+    setSending(false);
+    if (r) {
+      setResult(r);
+      setText("");
     }
   };
 
@@ -303,7 +290,7 @@ function WithdrawForm({
             type="submit"
             variant="primary"
             icon={<ArrowUpFromLine aria-hidden className="size-4" />}
-            pending={withdraw.pending}
+            pending={sending}
             disabled={!amount || problem !== null}
           >
             Withdraw
@@ -334,6 +321,38 @@ function WithdrawForm({
       </form>
     </Panel>
   );
+}
+
+/** What the gate is expected to do, as a sentence for the confirm dialog. */
+function expectation(p: Prediction, limiter: FlowLimiter, now: number): string {
+  const scope = scopeLabel(limiter.scope);
+  switch (p.kind) {
+    case "allow":
+      return "It should be sent at once.";
+    case "holdLarge":
+      return `It should be held for ${formatSpan(p.holdSecs)} before you can claim it. It stays yours meanwhile.`;
+    case "holdScreen":
+      return `It should be screened for ${formatSpan(p.holdSecs)} before you can claim it.`;
+    case "holdBreach":
+      return `It would cross the window's cap: it should be held for ${formatSpan(p.holdSecs)}, and ${scope.toLowerCase()} pause for ${formatSpan(p.tripSecs)}.`;
+    case "deny":
+      return `${scope} are paused for ${formatSpan(p.pausedUntil - now)} more, so it should be denied and nothing will move.`;
+  }
+}
+
+function shortExpectation(p: Prediction): string {
+  switch (p.kind) {
+    case "allow":
+      return "Sent at once";
+    case "holdLarge":
+      return `Held for ${formatSpan(p.holdSecs)}`;
+    case "holdScreen":
+      return `Screened for ${formatSpan(p.holdSecs)}`;
+    case "holdBreach":
+      return "Held, and withdrawals pause";
+    case "deny":
+      return "Denied: paused";
+  }
 }
 
 /** The gate's answer before sending, from the program's own rules. */
@@ -476,7 +495,6 @@ function DepositForm({
   vault: Address;
   mint: Address;
 }) {
-  const toast = useToast();
   const mock = useMockControls();
   const token = tokenInfo(mint);
   const balance = useTokenBalance(walletTokenAccount(wallet, mint));
@@ -492,9 +510,28 @@ function DepositForm({
         : amount > inWallet
           ? "That's more than your wallet holds."
           : null;
-  const deposit = useWrite((c) =>
-    c.deposit({ vault, amount: amount ?? BigInt(0) }),
-  );
+  const tx = useTx();
+  const [sending, setSending] = useState(false);
+  const sendDeposit = async () => {
+    if (!amount || problem) return;
+    const value = amount;
+    const shown = `${formatUnits(value, token.decimals)} ${token.symbol}`;
+    const r = await tx.send({
+      title: `Deposit ${shown}?`,
+      summary:
+        "It moves from your wallet into the test vault and adds to your position. Deposits don't count against the withdrawal cap.",
+      details: [
+        { label: "Amount", value: shown },
+        { label: "Into", value: "The test vault" },
+      ],
+      confirmLabel: "Deposit",
+      onStart: () => setSending(true),
+      run: (c) => c.deposit({ vault, amount: value }),
+      done: "Deposit made",
+    });
+    setSending(false);
+    if (r) setText("");
+  };
 
   return (
     <Panel
@@ -503,20 +540,9 @@ function DepositForm({
     >
       <form
         noValidate
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
-          if (!amount || problem) return;
-          try {
-            await deposit.run();
-            setText("");
-            toast.show({ tone: "open", title: "Deposit made" });
-          } catch (error) {
-            toast.show({
-              tone: "tripped",
-              title: "Deposit failed",
-              description: explain(error),
-            });
-          }
+          void sendDeposit();
         }}
         className="flex flex-col gap-4"
       >
@@ -538,7 +564,7 @@ function DepositForm({
           <Button
             type="submit"
             icon={<ArrowDownToLine aria-hidden className="size-4" />}
-            pending={deposit.pending}
+            pending={sending}
             disabled={!amount || problem !== null}
           >
             Deposit
@@ -614,10 +640,10 @@ function HoldRow({
   hold: AccountRecord<PendingWithdrawal>;
   now: number;
 }) {
-  const toast = useToast();
+  const tx = useTx();
+  const [sending, setSending] = useState(false);
   const h = hold.account;
   const token = tokenInfo(h.mint);
-  const claim = useWrite((c) => c.claimHeld({ config, hold: hold.address }));
   const claimable =
     h.status === "released" || (h.status === "queued" && now >= h.releaseAt);
 
@@ -644,11 +670,22 @@ function HoldRow({
       </span>
       {claimable && (
         <Button
-          pending={claim.pending}
+          pending={sending}
           onClick={async () => {
-            try {
-              const r = await claim.run();
-              toast.show(
+            await tx.send({
+              title: "Claim this withdrawal?",
+              summary:
+                "The protocol pays it out to your wallet. It counts against the window's cap, so if the cap is nearly used, the claim waits and withdrawals pause.",
+              details: [
+                {
+                  label: "Amount",
+                  value: `${formatUnits(h.amount, token.decimals)} ${token.symbol}`,
+                },
+              ],
+              confirmLabel: "Claim",
+              onStart: () => setSending(true),
+              run: (c) => c.claimHeld({ config, hold: hold.address }),
+              done: (r) =>
                 r.decision === "allow"
                   ? {
                       tone: "open",
@@ -661,14 +698,8 @@ function HoldRow({
                       description:
                         "Claiming it now would cross the window's cap, so withdrawals paused. Try again once the window frees up and they reopen.",
                     },
-              );
-            } catch (error) {
-              toast.show({
-                tone: "tripped",
-                title: "Claim failed",
-                description: explain(error),
-              });
-            }
+            });
+            setSending(false);
           }}
         >
           Claim

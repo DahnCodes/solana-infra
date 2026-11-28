@@ -25,6 +25,7 @@ import type {
   AccountRecord,
   Address,
   BreakglassEventRecord,
+  ClaimResult,
   HoldKind,
   PendingConfig,
   PendingWithdrawal,
@@ -39,7 +40,7 @@ import {
 import { isScopePaused } from "@/lib/breakglass/rules/pauses";
 import { holdRiskFlags } from "@/lib/breakglass/risk";
 import { cx } from "@/lib/cx";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatUnits } from "@/lib/format";
 import { tokenInfo } from "@/lib/tokens";
 import { walletLabel } from "@/lib/wallet-label";
 
@@ -231,6 +232,7 @@ function HoldRow({
     ? holdRiskFlags(h, balance.data ?? null, history)
     : [];
   const status = statusOf(h, now);
+  const amountText = `${formatUnits(h.amount, token.decimals)} ${token.symbol}`;
   const args = { config, hold: hold.address };
 
   return (
@@ -296,9 +298,28 @@ function HoldRow({
       <div className="flex flex-wrap gap-2">
         <ActionButton
           label="Claim"
-          done="Claimed"
+          done={(r: ClaimResult) =>
+            r.decision === "allow"
+              ? {
+                  tone: "open",
+                  title: "Claimed",
+                  description: "It's in your wallet now.",
+                }
+              : {
+                  tone: "held",
+                  title: "Not claimed yet",
+                  description:
+                    "Claiming now would cross the window's cap, so withdrawals paused. Try again once the window frees up.",
+                }
+          }
           permission={canClaim(wallet, h, now, scopePaused)}
           relevant={wallet === h.owner && isOpen(h)}
+          confirm={{
+            title: "Claim this withdrawal?",
+            summary:
+              "The protocol pays it out to your wallet. It counts against the window's cap, so if the cap is nearly used, the claim waits and withdrawals pause.",
+            details: [{ label: "Amount", value: amountText }],
+          }}
           run={(c) => c.claimHeld(args)}
         />
         <ActionButton
@@ -309,6 +330,15 @@ function HoldRow({
           relevant={
             (role === "guardian" || role === "admin") && h.status === "queued"
           }
+          confirm={{
+            title: "Freeze this hold?",
+            summary: `${walletLabel(h.owner)} won't be able to claim it. Only the admin can then reject it or release it through the timelock.`,
+            details: [
+              { label: "Amount", value: amountText },
+              { label: "To", value: walletLabel(h.owner) },
+            ],
+            confirmLabel: "Freeze hold",
+          }}
           run={(c) => c.freezeHeld(args)}
         />
         <ActionButton
@@ -317,6 +347,15 @@ function HoldRow({
           icon={<Undo2 aria-hidden className="size-4" />}
           permission={canReject(role, h)}
           relevant={role === "admin" && isOpen(h)}
+          confirm={{
+            title: "Reject this withdrawal?",
+            summary: `Nothing is paid out. The amount goes back to ${walletLabel(h.owner)}'s position in the protocol, at once.`,
+            details: [
+              { label: "Amount", value: amountText },
+              { label: "Returned to", value: walletLabel(h.owner) },
+            ],
+            confirmLabel: "Reject withdrawal",
+          }}
           run={(c) => c.rejectHeld(args)}
         />
         <ActionButton
@@ -329,6 +368,16 @@ function HoldRow({
             pendingRelease?.account ?? null,
           )}
           relevant={role === "admin" && h.status === "frozen"}
+          confirm={{
+            title: "Release this frozen withdrawal?",
+            summary:
+              "Releasing loosens protection, so it is proposed now and waits out the timelock in public. The guardian can veto it meanwhile; after that, anyone can execute it and the owner can claim.",
+            details: [
+              { label: "Amount", value: amountText },
+              { label: "To", value: walletLabel(h.owner) },
+            ],
+            confirmLabel: "Propose release",
+          }}
           run={(c) => c.releaseHeld(args)}
         />
         {pendingRelease && (
@@ -336,6 +385,12 @@ function HoldRow({
             label="Execute the release"
             done="Release executed: the hold can be claimed"
             permission={canExecute(wallet, pendingRelease.account, now)}
+            confirm={{
+              title: "Execute the release?",
+              summary:
+                "The timelock has passed and nobody vetoed it. The hold becomes claimable by its owner.",
+              details: [{ label: "Amount", value: amountText }],
+            }}
             run={(c) =>
               c.executeConfig({ config, change: pendingRelease.address })
             }

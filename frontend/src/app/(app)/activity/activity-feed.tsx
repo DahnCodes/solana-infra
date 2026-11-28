@@ -253,6 +253,12 @@ function IncidentsList() {
                   <ActionButton
                     label="Acknowledge"
                     done="Incident acknowledged"
+                    confirm={{
+                      title: "Acknowledge this incident?",
+                      summary: `Others see that ${wallet ? walletLabel(wallet) : "you"} is on it. This goes to the monitor, not the chain: nothing to sign.`,
+                      details: [{ label: "Incident", value: i.title }],
+                      signs: false,
+                    }}
                     permission={
                       wallet
                         ? { allowed: true }

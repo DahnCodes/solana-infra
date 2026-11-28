@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `4.9 Role awareness`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `5.1 Confirm before signing`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -118,6 +118,7 @@ src/
 - **4.7** done: `/rules` (`rules-panel.tsx`): pauses per scope with Extend and Lift, a Pause dialog (several scopes at once, length capped for guardians, reason code), the guardian's limits, budget and cooldown; guardians with Remove (admin, at once); config changes with Execute, Veto, Cancel and a Propose dialog (token limits, add guardian, hand over admin, pause policy). Pause buttons are decided by running the program's own pause rules on copies (`canPause`, `canRenew`, `canUnpause` in `permissions.ts`), so a refusal names the program's reason. `messages.ts` holds the error wording (FRONTEND.md section 8 plus protocol and token errors); `ActionButton` (`src/components/action-button.tsx`) is the shared write button with permission, pending state and toasts.
 - **4.8** done: `/activity` (`activity-feed.tsx`): every event newest first as a sentence (`describeEvent` in `describe.ts`, tested), with time, who acted and the transaction, filters (withdrawals and holds, pauses, config) and "Show older events"; incidents with Acknowledge. `BreakglassEventRecord` gained `signer` (the transaction's signer; not part of the event, the live client reads it from the transaction). Gap for checkpoint A: `init_flow_limiter`, `cancel_config` and the test vault's deposit emit no events in FRONTEND.md, so they don't appear in the feed.
 - **4.9** done: one rule for every action. `ActionButton` takes `relevant` (could this role ever do it here?): not relevant, hidden; relevant but not allowed now, disabled with the reason as visible text beside it (not a tooltip); allowed, enabled. Reasons come from `permissions.ts` (role matrix tested). `RoleBadge` in the top bar says "Acting as Admin / Guardian / User". Note: Next 16 (Cache Components) keeps previously visited pages in the DOM, hidden, so DOM queries in browser checks must ignore hidden routes.
+- **5.1** done: every write goes through `TxProvider` / `useTx().send()` (`src/components/tx/tx-provider.tsx`, in the `(app)` layout): a confirm dialog with a question, a plain one- or two-sentence summary, key details and "Your wallet will ask you to sign", then the write and a toast. `ActionButton` takes a `confirm` prop; the withdraw, deposit, claim, pause and propose forms call `send` directly; the withdraw confirmation repeats the gate's expected answer. The register flow's own review step is its summary. `useWrite` and the temporary `/mock` page and `PlannedScreen` were removed (every screen exists now). `signs: false` marks writes with nothing to sign (incident acknowledge).
 
 ## The checklist
 
@@ -151,7 +152,7 @@ The checklist was first written when the product was imagined as a vault that ho
 | 4.8  | ✅     | Activity feed                                                                            | 4.4           | Every action appears with its time and actor                                   | Must     |
 | 4.9  | ✅     | Role awareness: show or disable each action and say why                                  | 4.5, 4.6, 4.7 | Each role sees only what it may do                                             | Must     |
 | 4.10 |        | "My vaults" list                                                                         | 4.4           | Lists what this wallet administers or guards                                   | Later    |
-| 5.1  |        | Confirm dialog that says what a transaction will do before signing                       | 4.5           | Every write shows a plain-language summary first                               | Must     |
+| 5.1  | ✅     | Confirm dialog that says what a transaction will do before signing                       | 4.5           | Every write shows a plain-language summary first                               | Must     |
 | 5.2  |        | Pending, confirmed and failed states with explorer links                                 | 5.1           | Each write shows its state and a link                                          | Must     |
 | 5.3  |        | Loading, empty and error states for every panel                                          | 4.9           | No panel is ever blank or stuck                                                | Must     |
 | A    |        | **Checkpoint A:** program IDL, generated types, errors and events                        |               | The human confirms the IDL in `clients/ts/idl` covers the instructions we need | Must     |

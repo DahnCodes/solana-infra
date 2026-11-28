@@ -2,7 +2,7 @@
 
 import { Pause, Play, Plus, RotateCw, ShieldOff } from "lucide-react";
 import { useState } from "react";
-import { ActionButton, explainError } from "@/components/action-button";
+import { ActionButton } from "@/components/action-button";
 import { Badge } from "@/components/badge";
 import { Button } from "@/components/button";
 import { Countdown } from "@/components/countdown";
@@ -11,7 +11,7 @@ import { Input } from "@/components/input";
 import { PageHeader } from "@/components/page-header";
 import { InsetPanel, Panel } from "@/components/panel";
 import { Select } from "@/components/select";
-import { useToast } from "@/components/toast";
+import { useTx } from "@/components/tx/tx-provider";
 import {
   roleOf,
   useChainNow,
@@ -23,7 +23,6 @@ import {
   useProtocol,
   type Role,
 } from "@/hooks/use-breakglass";
-import { useWrite } from "@/hooks/use-write";
 import type {
   AccountRecord,
   Address,
@@ -62,6 +61,8 @@ import { tokenInfo } from "@/lib/tokens";
 import { walletLabel } from "@/lib/wallet-label";
 
 const H = 3600;
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Pause controls, guardians and the timelocked config changes. */
 export function RulesPanel() {
@@ -236,6 +237,15 @@ function PausesCard({
                         icon={<RotateCw aria-hidden className="size-4" />}
                         permission={canRenew(ctx, mask)}
                         relevant={role === "admin" || role === "guardian"}
+                        confirm={{
+                          title: `Extend the pause on ${scopeLabel(scope).toLowerCase()}?`,
+                          summary:
+                            `It stays paused for another ${formatSpan(cfg.policy.maxGuardianPauseSecs)} from its current end. ` +
+                            (role === "guardian"
+                              ? `This uses ${formatSpan(cfg.policy.maxGuardianPauseSecs)} of your pause budget.`
+                              : "As the admin's extension, only the admin can lift it."),
+                          confirmLabel: "Extend pause",
+                        }}
                         run={(c) => c.renewPause({ config, scopes: mask })}
                       />
                       <ActionButton
@@ -244,6 +254,11 @@ function PausesCard({
                         icon={<Play aria-hidden className="size-4" />}
                         permission={canUnpause(ctx, mask)}
                         relevant={role === "admin" || role === "guardian"}
+                        confirm={{
+                          title: `Lift the pause on ${scopeLabel(scope).toLowerCase()}?`,
+                          summary: `${scopeLabel(scope)} reopen at once. Every pause on this scope that you're allowed to lift ends now.`,
+                          confirmLabel: "Lift pause",
+                        }}
                         run={(c) => c.unpause({ config, scopes: mask })}
                       />
                       <Badge status="tripped">Paused</Badge>
@@ -284,7 +299,6 @@ function PauseDialog({
   role: Role | null;
   ctx: Parameters<typeof canPause>[0];
 }) {
-  const toast = useToast();
   const [picked, setPicked] = useState<number[]>([]);
   const [hours, setHours] = useState("6");
   const [reason, setReason] = useState("0");
@@ -301,14 +315,36 @@ function PauseDialog({
   const permission = picked.length
     ? canPause(ctx, mask, duration)
     : ({ allowed: false, reason: "Pick at least one scope." } as const);
-  const pause = useWrite((c) =>
-    c.pause({
-      config: ctx.configAddress,
-      scopes: mask,
-      duration,
-      reason: reasonCode,
-    }),
-  );
+  const tx = useTx();
+  const [sending, setSending] = useState(false);
+  const names = picked.map((s) => scopeLabel(s).toLowerCase()).join(", ");
+  const sendPause = async () => {
+    onClose();
+    await tx.send({
+      title: `Pause ${names}?`,
+      summary:
+        role === "guardian"
+          ? `${capitalize(names)} stop until the pause ends or you lift it. Afterwards you cool down for ${formatSpan(ctx.config.policy.cooldownSecs)} before you can pause again.`
+          : `${capitalize(names)} stop until the pause ends or it's lifted. Only the admin can lift an admin pause.`,
+      details: [
+        { label: "Scopes", value: names },
+        { label: "For", value: formatSpan(duration) },
+        { label: "Reason code", value: String(reasonCode) },
+      ],
+      confirmLabel: "Pause",
+      onStart: () => setSending(true),
+      run: (c) =>
+        c.pause({
+          config: ctx.configAddress,
+          scopes: mask,
+          duration,
+          reason: reasonCode,
+        }),
+      done: { tone: "tripped", title: `Paused for ${formatSpan(duration)}` },
+    });
+    setSending(false);
+    setPicked([]);
+  };
 
   return (
     <Dialog
@@ -328,25 +364,9 @@ function PauseDialog({
           <Button
             variant="primary"
             icon={<Pause aria-hidden className="size-4" />}
-            pending={pause.pending}
+            pending={sending}
             disabled={!permission.allowed || !reasonOk}
-            onClick={async () => {
-              try {
-                await pause.run();
-                toast.show({
-                  tone: "tripped",
-                  title: `Paused for ${formatSpan(duration)}`,
-                });
-                setPicked([]);
-                onClose();
-              } catch (error) {
-                toast.show({
-                  tone: "tripped",
-                  title: "Pause didn't go through",
-                  description: explainError(error),
-                });
-              }
-            }}
+            onClick={sendPause}
           >
             Pause
           </Button>
@@ -448,6 +468,13 @@ function GuardiansCard({
                 icon={<ShieldOff aria-hidden className="size-4" />}
                 permission={canRemoveGuardian(role)}
                 relevant={role === "admin"}
+                confirm={{
+                  title: `Remove ${walletLabel(g)} as a guardian?`,
+                  summary:
+                    "It loses every power at once. Its running pauses stay until they end or you lift them.",
+                  details: [{ label: "Guardian", value: g }],
+                  confirmLabel: "Remove guardian",
+                }}
                 run={(c) => c.removeGuardian({ config, guardian: g })}
               />
             </li>
@@ -529,6 +556,11 @@ function ChangesCard({
                       label="Execute"
                       done="Change executed"
                       permission={canExecute(wallet, a, now)}
+                      confirm={{
+                        title: "Execute this change?",
+                        summary: `It takes effect now: ${describeAction(a.action, tokenInfo)}.`,
+                        confirmLabel: "Execute change",
+                      }}
                       run={(cl) => cl.executeConfig(args)}
                     />
                     <ActionButton
@@ -536,6 +568,11 @@ function ChangesCard({
                       done="Change vetoed"
                       permission={canVeto(role, a)}
                       relevant={role === "guardian"}
+                      confirm={{
+                        title: "Veto this change?",
+                        summary: `It can never be executed: ${describeAction(a.action, tokenInfo)}.`,
+                        confirmLabel: "Veto change",
+                      }}
                       run={(cl) => cl.vetoConfig(args)}
                     />
                     <ActionButton
@@ -544,6 +581,11 @@ function ChangesCard({
                       done="Change cancelled"
                       permission={canCancel(role, a)}
                       relevant={role === "admin"}
+                      confirm={{
+                        title: "Cancel this change?",
+                        summary: `Your proposal is withdrawn: ${describeAction(a.action, tokenInfo)}.`,
+                        confirmLabel: "Cancel change",
+                      }}
                       run={(cl) => cl.cancelConfig(args)}
                     />
                   </div>
@@ -601,7 +643,6 @@ function ProposeDialog({
   config: Address;
   limiters: AccountRecord<FlowLimiter>[];
 }) {
-  const toast = useToast();
   const first = limiters[0]?.account;
   const firstToken = first ? tokenInfo(first.mint) : null;
   const [kind, setKind] = useState<Kind>("raiseLimits");
@@ -694,7 +735,29 @@ function ProposeDialog({
     }
   })();
 
-  const propose = useWrite((c) => c.proposeConfig({ config, action: action! }));
+  const tx = useTx();
+  const [sending, setSending] = useState(false);
+  const sendProposal = async () => {
+    if (!action) return;
+    onClose();
+    await tx.send({
+      title: "Propose this change?",
+      summary: `${describeAction(action, tokenInfo)}. It waits ${formatSpan(cfg.timelockSecs)} in public, where the guardian can veto it; after that, anyone can execute it.`,
+      details: [
+        { label: "Timelock", value: formatSpan(cfg.timelockSecs) },
+        { label: "Can be vetoed by", value: "Any guardian" },
+      ],
+      confirmLabel: "Propose change",
+      onStart: () => setSending(true),
+      run: (c) => c.proposeConfig({ config, action }),
+      done: {
+        tone: "held",
+        title: "Change proposed",
+        description: `It can be executed in ${formatSpan(cfg.timelockSecs)}.`,
+      },
+    });
+    setSending(false);
+  };
 
   return (
     <Dialog
@@ -709,25 +772,9 @@ function ProposeDialog({
           </Button>
           <Button
             variant="primary"
-            pending={propose.pending}
+            pending={sending}
             disabled={!action}
-            onClick={async () => {
-              try {
-                await propose.run();
-                toast.show({
-                  tone: "held",
-                  title: "Change proposed",
-                  description: `It can be executed in ${formatSpan(cfg.timelockSecs)}.`,
-                });
-                onClose();
-              } catch (error) {
-                toast.show({
-                  tone: "tripped",
-                  title: "Proposal didn't go through",
-                  description: explainError(error),
-                });
-              }
-            }}
+            onClick={sendProposal}
           >
             Propose
           </Button>
