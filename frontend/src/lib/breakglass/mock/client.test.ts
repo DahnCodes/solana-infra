@@ -606,6 +606,16 @@ describe("demo programs", () => {
   });
 });
 
+describe("simulated outage", () => {
+  it("fails every read while on, and recovers when off", async () => {
+    client.setOutage(true);
+    await rejects(client.listHolds(config), "NetworkUnavailable");
+    await rejects(client.getClock(), "NetworkUnavailable");
+    client.setOutage(false);
+    assert.equal((await client.listHolds(config)).length, 3);
+  });
+});
+
 describe("test-token faucet", () => {
   it("funds a brand-new wallet so it can deposit", async () => {
     const newcomer = "NewJudgeWa11et1111111111111111111111111111";

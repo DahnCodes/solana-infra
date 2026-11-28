@@ -43,6 +43,8 @@ const OTHER_MESSAGES: Record<string, string> = {
   AccountAlreadyInUse: "That already exists.",
   AccountNotInitialized: "That account doesn't exist.",
   WalletNotConnected: "Connect a wallet first.",
+  NetworkUnavailable:
+    "Couldn't reach the network. Check your connection and try again.",
 };
 
 /** The message for an error name, or null if it isn't known. */

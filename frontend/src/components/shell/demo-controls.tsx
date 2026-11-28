@@ -75,6 +75,15 @@ export function DemoControls() {
           </ClockButton>
         </div>
       </div>
+      <label className="flex items-center gap-2 text-body text-ink-secondary">
+        <input
+          type="checkbox"
+          checked={controls.outage}
+          onChange={(e) => controls.setOutage(e.target.checked)}
+          className="size-4 accent-primary"
+        />
+        Simulate an RPC outage
+      </label>
     </section>
   );
 }

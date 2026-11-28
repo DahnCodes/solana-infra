@@ -116,12 +116,21 @@ export function useIncident(id: string | null) {
  * (pause expiry, releaseAt, executableAt).
  */
 export function useChainNow(): number | null {
+  return useChainClock().now;
+}
+
+/** useChainNow, plus the read's error and a retry, for screens that wait on it. */
+export function useChainClock() {
   const real = useNow();
-  const { data: offset } = useClientQuery(
+  const offset = useClientQuery(
     "clock-offset",
     async (c) => (await c.getClock()) - Math.floor(Date.now() / 1000),
   );
-  return real === null || offset === undefined ? null : real + offset;
+  return {
+    now: real === null || offset.data === undefined ? null : real + offset.data,
+    error: offset.data === undefined ? offset.error : undefined,
+    retry: offset.retry,
+  };
 }
 
 // Wallet and role ------------------------------------------------------------------
@@ -160,6 +169,11 @@ export function useTestVault() {
 export function useMockControls() {
   const wallet = useConnectedWallet();
   const hydrated = useHydrated();
+  const outage = useSyncExternalStore(
+    subscribeToMock,
+    () => getMockClient()?.simulatingOutage ?? false,
+    () => false,
+  );
   const mock = hydrated ? getMockClient() : null;
   if (!mock) return null;
   return {
@@ -170,6 +184,8 @@ export function useMockControls() {
     reset: () => mock.reset(),
     requestTestTokens: (amount: bigint) => mock.requestTestTokens(amount),
     createDemoProgram: () => mock.createDemoProgram(),
+    outage,
+    setOutage: (on: boolean) => mock.setOutage(on),
     testVault: mock.testVault,
   };
 }

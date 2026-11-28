@@ -11,6 +11,8 @@ export type QueryResult<T> = {
   error: unknown;
   /** True until the first result (or error) for the current key. */
   loading: boolean;
+  /** Reads again now (after an error, say). */
+  retry: () => void;
 };
 
 type State<T> = { key: string; data?: T; error?: unknown; settled: boolean };
@@ -29,6 +31,7 @@ export function useClientQuery<T>(
   read: (client: BreakglassClient) => Promise<T>,
 ): QueryResult<T> {
   const [state, setState] = useState<State<T> | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const readLatest = useEffectEvent(read);
 
   useEffect(() => {
@@ -64,7 +67,7 @@ export function useClientQuery<T>(
       active = false;
       stop();
     };
-  }, [key]);
+  }, [key, attempt]);
 
   // A state left over from another key doesn't count.
   const current = key !== null && state?.key === key ? state : null;
@@ -72,5 +75,6 @@ export function useClientQuery<T>(
     data: current?.data,
     error: current?.error,
     loading: key !== null && !current?.settled,
+    retry: () => setAttempt((n) => n + 1),
   };
 }

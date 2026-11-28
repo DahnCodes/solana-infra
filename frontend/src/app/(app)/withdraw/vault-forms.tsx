@@ -15,9 +15,10 @@ import { Button } from "@/components/button";
 import { Countdown } from "@/components/countdown";
 import { Input } from "@/components/input";
 import { InsetPanel, Panel } from "@/components/panel";
+import { ErrorNote, QueryStatus, Skeleton } from "@/components/query-state";
 import { useTx } from "@/components/tx/tx-provider";
 import {
-  useChainNow,
+  useChainClock,
   useConnectedWallet,
   useFlowLimiters,
   useHolds,
@@ -51,13 +52,35 @@ export function VaultForms() {
   const wallet = useConnectedWallet();
   const vault = useTestVault();
   const protocol = useProtocol();
-  const now = useChainNow();
+  const clock = useChainClock();
+  const now = clock.now;
   const config = protocol.data?.address ?? null;
   const limiters = useFlowLimiters(config);
   const limiter = limiters.data?.find((l) => l.account.mint === vault?.mint);
 
+  const failed =
+    (protocol.data === undefined && protocol.error) ||
+    (limiters.data === undefined && limiters.error) ||
+    clock.error;
+  if (failed) {
+    return (
+      <ErrorNote
+        what="the vault"
+        error={failed}
+        onRetry={() => {
+          protocol.retry();
+          limiters.retry();
+          clock.retry();
+        }}
+      />
+    );
+  }
   if (!vault || protocol.loading || limiters.loading || now === null) {
-    return <p className="text-body text-ink-muted">Loading the vault…</p>;
+    return (
+      <Panel>
+        <Skeleton rows={5} label="the vault" />
+      </Panel>
+    );
   }
   if (!wallet) {
     return (
@@ -124,31 +147,40 @@ function Position({
   const position = usePosition(vault, wallet);
   const balance = useTokenBalance(walletTokenAccount(wallet, mint));
   const token = tokenInfo(mint);
-  const amount = (v: bigint | undefined) =>
-    v === undefined ? (
-      <span className="text-ink-muted">…</span>
-    ) : (
-      <Amount value={v} decimals={token.decimals} symbol={token.symbol} />
-    );
+  const amount = (v: bigint) => (
+    <Amount value={v} decimals={token.decimals} symbol={token.symbol} />
+  );
+  // A figure we couldn't read shows a dash, never a misleading zero.
+  const unknown = <span className="text-ink-muted">Unavailable</span>;
   return (
     <Panel
       title="Your position"
       description="What you have in the test vault, and in your wallet."
       className="lg:col-span-2"
     >
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Figure label="Can withdraw">
-          {position.loading
-            ? amount(undefined)
-            : amount(position.data?.amount ?? BigInt(0))}
-        </Figure>
-        <Figure label="Held, still yours">
-          {position.loading
-            ? amount(undefined)
-            : amount(position.data?.held ?? BigInt(0))}
-        </Figure>
-        <Figure label="In your wallet">{amount(balance.data)}</Figure>
-      </div>
+      {position.data === undefined ? (
+        <QueryStatus query={position} what="your position" rows={2} />
+      ) : (
+        <>
+          <QueryStatus query={position} what="your position" />
+          <div className="grid gap-3 sm:grid-cols-3">
+            {/* No position yet (null) really is zero: nothing deposited. */}
+            <Figure label="Can withdraw">
+              {amount(position.data?.amount ?? BigInt(0))}
+            </Figure>
+            <Figure label="Held, still yours">
+              {amount(position.data?.held ?? BigInt(0))}
+            </Figure>
+            <Figure label="In your wallet">
+              {balance.data !== undefined
+                ? amount(balance.data)
+                : balance.error
+                  ? unknown
+                  : "…"}
+            </Figure>
+          </div>
+        </>
+      )}
     </Panel>
   );
 }
@@ -616,10 +648,12 @@ function YourHolds({
       title="Your held withdrawals"
       description="Claim each one once its hold ends."
     >
-      {holds.loading ? (
-        <p className="text-body text-ink-muted">Loading…</p>
-      ) : open.length === 0 ? (
-        <p className="text-body text-ink-secondary">You have nothing held.</p>
+      <QueryStatus query={holds} what="your held withdrawals" rows={2} />
+      {holds.data === undefined ? null : open.length === 0 ? (
+        <p className="text-body text-ink-secondary">
+          You have nothing held. A withdrawal at or above the threshold waits
+          here until you can claim it.
+        </p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {open.map((h) => (

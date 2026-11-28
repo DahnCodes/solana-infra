@@ -1,7 +1,7 @@
 "use client";
 
 import { Pause, Play, Plus, RotateCw, ShieldOff } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ActionButton } from "@/components/action-button";
 import { Badge } from "@/components/badge";
 import { Button } from "@/components/button";
@@ -9,12 +9,13 @@ import { Countdown } from "@/components/countdown";
 import { Dialog } from "@/components/dialog";
 import { Input } from "@/components/input";
 import { PageHeader } from "@/components/page-header";
+import { ErrorNote, QueryStatus, Skeleton } from "@/components/query-state";
 import { InsetPanel, Panel } from "@/components/panel";
 import { Select } from "@/components/select";
 import { useTx } from "@/components/tx/tx-provider";
 import {
   roleOf,
-  useChainNow,
+  useChainClock,
   useConnectedWallet,
   useFlowLimiters,
   useGuardianLedger,
@@ -68,7 +69,8 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 export function RulesPanel() {
   const protocol = useProtocol();
   const wallet = useConnectedWallet();
-  const now = useChainNow();
+  const clock = useChainClock();
+  const now = clock.now;
   const config = protocol.data?.address ?? null;
   const pauses = usePauseState(config);
   const limiters = useFlowLimiters(config);
@@ -77,7 +79,18 @@ export function RulesPanel() {
   const cfg = protocol.data?.account;
   const role = roleOf(cfg, wallet);
 
-  const ready = cfg && config && pauses.data && limiters.data && now !== null;
+  const ready =
+    cfg &&
+    config &&
+    pauses.data &&
+    limiters.data &&
+    now !== null &&
+    // A guardian's buttons depend on its ledger; wait for it (or its absence).
+    (!wallet || ledger.data !== undefined);
+  // The first read that failed and has nothing to show, if any.
+  const failed = [protocol, pauses, limiters, ...(wallet ? [ledger] : [])].find(
+    (q) => q.data === undefined && q.error,
+  );
 
   return (
     <>
@@ -86,7 +99,20 @@ export function RulesPanel() {
         description="Pausing tightens protection, so it applies at once. Anything that loosens it waits out the timelock, in public, where the guardian can veto it."
       />
       {!ready ? (
-        <p className="text-body text-ink-muted">Loading the rules…</p>
+        failed || clock.error ? (
+          <ErrorNote
+            what="the rules"
+            error={failed?.error ?? clock.error}
+            onRetry={() => {
+              [protocol, pauses, limiters, ledger].forEach((q) => q.retry());
+              clock.retry();
+            }}
+          />
+        ) : (
+          <Panel>
+            <Skeleton rows={6} label="the rules" />
+          </Panel>
+        )
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           <PausesCard
@@ -104,6 +130,10 @@ export function RulesPanel() {
             cfg={cfg}
             config={config}
             changes={changes.data ?? []}
+            changesStatus={
+              <QueryStatus query={changes} what="config changes" />
+            }
+            changesLoaded={changes.data !== undefined}
             limiters={limiters.data!}
             wallet={wallet}
             role={role}
@@ -494,6 +524,8 @@ function ChangesCard({
   cfg,
   config,
   changes,
+  changesStatus,
+  changesLoaded,
   limiters,
   wallet,
   role,
@@ -502,6 +534,9 @@ function ChangesCard({
   cfg: ProtocolConfig;
   config: Address;
   changes: AccountRecord<PendingConfig>[];
+  /** Skeleton, error or stale note for the changes read. */
+  changesStatus: ReactNode;
+  changesLoaded: boolean;
   limiters: AccountRecord<FlowLimiter>[];
   wallet: Address | null;
   role: Role | null;
@@ -523,8 +558,12 @@ function ChangesCard({
         )
       }
     >
-      {changes.length === 0 ? (
-        <p className="text-body text-ink-secondary">No changes proposed.</p>
+      {changesStatus}
+      {!changesLoaded ? null : changes.length === 0 ? (
+        <p className="text-body text-ink-secondary">
+          No changes proposed. The admin proposes changes that loosen
+          protection; they wait out the timelock here.
+        </p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {changes.map((c) => {

@@ -7,10 +7,11 @@ import { Badge, type Status } from "@/components/badge";
 import { ActionButton } from "@/components/action-button";
 import { Countdown } from "@/components/countdown";
 import { PageHeader } from "@/components/page-header";
+import { ErrorNote, QueryStatus } from "@/components/query-state";
 import { Panel } from "@/components/panel";
 import {
   roleOf,
-  useChainNow,
+  useChainClock,
   useConnectedWallet,
   useEvents,
   useFlowLimiters,
@@ -67,7 +68,8 @@ export function WaitingRoom() {
   const config = protocol.data?.address ?? null;
   const wallet = useConnectedWallet();
   const role = roleOf(protocol.data?.account, wallet);
-  const now = useChainNow();
+  const clock = useChainClock();
+  const now = clock.now;
   const holds = useHolds(config);
   const changes = usePendingChanges(config);
   const events = useEvents(config, 500);
@@ -113,7 +115,8 @@ export function WaitingRoom() {
                     : "border-line-strong bg-surface text-ink hover:bg-surface-inset",
                 )}
               >
-                {f.label} ({count(f.id)})
+                {f.label}
+                {holds.data !== undefined && ` (${count(f.id)})`}
               </button>
             ))}
           </div>
@@ -121,7 +124,9 @@ export function WaitingRoom() {
         title={
           role
             ? `You're acting as ${roleName(role)}`
-            : "Connect a wallet to act"
+            : wallet
+              ? "Every hold"
+              : "Connect a wallet to act"
         }
         description={
           role === "guardian"
@@ -133,13 +138,26 @@ export function WaitingRoom() {
                 : "Anyone can see every hold."
         }
       >
-        {holds.loading || now === null || !config ? (
-          <p className="text-body text-ink-muted">Loading holds…</p>
-        ) : shown.length === 0 ? (
+        {protocol.data === undefined ? (
+          <QueryStatus query={protocol} what="the protocol" rows={5} />
+        ) : clock.error ? (
+          <ErrorNote
+            what="the chain's clock"
+            error={clock.error}
+            onRetry={clock.retry}
+          />
+        ) : (
+          <QueryStatus query={holds} what="held withdrawals" rows={5} />
+        )}
+        {holds.data === undefined ||
+        now === null ||
+        !config ? null : shown.length === 0 ? (
           <p className="text-body text-ink-secondary">
             {filter === "attention"
-              ? "Nothing is held right now."
-              : "No holds here."}
+              ? "Nothing is held right now. Withdrawals at or above the threshold wait here before they can be claimed."
+              : filter === "settled"
+                ? "No hold has been settled yet."
+                : "No withdrawal has been held yet."}
           </p>
         ) : (
           <ul className="flex flex-col divide-y divide-line">
@@ -151,7 +169,7 @@ export function WaitingRoom() {
                 role={role}
                 wallet={wallet}
                 now={now}
-                history={events.data?.items ?? []}
+                history={events.data?.items ?? null}
                 pendingRelease={
                   (changes.data ?? []).find(
                     (c) =>
@@ -217,7 +235,7 @@ function HoldRow({
   role: Role | null;
   wallet: Address | null;
   now: number;
-  history: BreakglassEventRecord[];
+  history: BreakglassEventRecord[] | null;
   pendingRelease: AccountRecord<PendingConfig> | null;
   scopePaused: boolean;
 }) {

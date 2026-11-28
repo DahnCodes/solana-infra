@@ -7,11 +7,12 @@ import { Amount } from "@/components/amount";
 import { Badge, type Status } from "@/components/badge";
 import { Countdown } from "@/components/countdown";
 import { PageHeader } from "@/components/page-header";
+import { ErrorNote, QueryStatus, Skeleton } from "@/components/query-state";
 import { InsetPanel, Panel } from "@/components/panel";
 import { Select } from "@/components/select";
 import { BucketBars, WindowMeter } from "@/components/window-meter";
 import {
-  useChainNow,
+  useChainClock,
   useFlowLimiters,
   useGuardianLedger,
   useHolds,
@@ -27,6 +28,7 @@ import type {
   Address,
   FlowLimiter,
   PausePolicy,
+  PauseState,
   ProtocolConfig,
   ScopePause,
   Severity,
@@ -52,6 +54,7 @@ import {
 } from "@/lib/breakglass/rules/pauses";
 import { formatDateTime, shortAddress } from "@/lib/format";
 import { tokenInfo } from "@/lib/tokens";
+import type { QueryResult } from "@/hooks/use-client-query";
 import { walletLabel } from "@/lib/wallet-label";
 
 /** The protocol dashboard: everything about the gate on one screen. */
@@ -59,17 +62,40 @@ export function Overview() {
   const fallback = useProtocol();
   const protocols = useProtocols();
   const [picked, setPicked] = useState<Address | null>(null);
-  const now = useChainNow();
+  const clock = useChainClock();
+  const now = clock.now;
 
   const list = protocols.data ?? [];
   const current =
     list.find((p) => p.address === picked) ?? fallback.data ?? list[0] ?? null;
 
+  const failed =
+    (fallback.data === undefined && fallback.error) ||
+    (protocols.data === undefined && protocols.error) ||
+    clock.error;
+  if (failed) {
+    return (
+      <>
+        <PageHeader title="Overview" />
+        <ErrorNote
+          what="the gate"
+          error={failed}
+          onRetry={() => {
+            fallback.retry();
+            protocols.retry();
+            clock.retry();
+          }}
+        />
+      </>
+    );
+  }
   if (fallback.loading || protocols.loading || now === null) {
     return (
       <>
         <PageHeader title="Overview" />
-        <p className="text-body text-ink-muted">Loading the gate…</p>
+        <Panel>
+          <Skeleton rows={5} label="the gate" />
+        </Panel>
       </>
     );
   }
@@ -151,6 +177,15 @@ function ProtocolOverview({
       />
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="flex flex-col gap-6 lg:col-span-2">
+          {limiters.data === undefined && (
+            <Panel title="Withdrawal window">
+              <QueryStatus
+                query={limiters}
+                what="the withdrawal limits"
+                rows={4}
+              />
+            </Panel>
+          )}
           {limiters.data?.length === 0 && (
             <Panel title="Withdrawal window">
               <p className="text-body text-ink-secondary">
@@ -170,6 +205,7 @@ function ProtocolOverview({
         <ScopesCard
           config={cfg}
           limiters={limiters.data ?? []}
+          pauses={pauses}
           running={running}
           now={now}
         />
@@ -222,7 +258,7 @@ function WindowCard({
   if (balance.data === undefined) {
     return (
       <Panel title={`${token.symbol} withdrawal window`}>
-        <p className="text-body text-ink-muted">Loading…</p>
+        <QueryStatus query={balance} what="the vault balance" rows={4} />
       </Panel>
     );
   }
@@ -332,14 +368,24 @@ function WindowCard({
 function ScopesCard({
   config,
   limiters,
+  pauses,
   running,
   now,
 }: {
   config: ProtocolConfig;
   limiters: AccountRecord<FlowLimiter>[];
+  pauses: QueryResult<AccountRecord<PauseState> | null>;
   running: ScopePause[];
   now: number;
 }) {
+  // Without the pause state, "open" would be a guess: show the load state.
+  if (pauses.data === undefined) {
+    return (
+      <Panel title="Scopes" description="What the protocol can do right now.">
+        <QueryStatus query={pauses} what="the pause state" rows={4} />
+      </Panel>
+    );
+  }
   const always = scopesInMask(config.unpausableMask);
   const scopes = [
     ...new Set([
@@ -413,9 +459,8 @@ function HoldsCard({ config, now }: { config: Address; now: number }) {
       description="Large withdrawals wait here in public before they can be claimed."
       actions={<CardLink href="/holds">All holds</CardLink>}
     >
-      {holds.loading ? (
-        <p className="text-body text-ink-muted">Loading…</p>
-      ) : open.length === 0 ? (
+      <QueryStatus query={holds} what="held withdrawals" />
+      {holds.data === undefined ? null : open.length === 0 ? (
         <p className="text-body text-ink-secondary">
           Nothing is held right now.
         </p>
@@ -492,9 +537,8 @@ function ChangesCard({ config, now }: { config: Address; now: number }) {
       description="Anything that loosens protection waits out the timelock, in public, and the guardian can veto it."
       actions={<CardLink href="/rules">Rules</CardLink>}
     >
-      {changes.loading ? (
-        <p className="text-body text-ink-muted">Loading…</p>
-      ) : waiting.length === 0 ? (
+      <QueryStatus query={changes} what="pending changes" />
+      {changes.data === undefined ? null : waiting.length === 0 ? (
         <p className="text-body text-ink-secondary">No change is waiting.</p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">
@@ -569,8 +613,16 @@ function GuardianRow({
   now: number;
 }) {
   const ledger = useGuardianLedger(config, guardian);
-  if (ledger.loading) {
-    return <li className="py-3 text-body text-ink-muted">Loading…</li>;
+  if (ledger.data === undefined && (ledger.loading || ledger.error)) {
+    return (
+      <li className="py-3">
+        <QueryStatus
+          query={ledger}
+          what={`${walletLabel(guardian)}'s pause budget`}
+          rows={2}
+        />
+      </li>
+    );
   }
   const account = ledger.data?.account ?? null;
   const left = budgetLeft(account, policy, now);
@@ -627,9 +679,8 @@ function IncidentsCard({ program }: { program: Address }) {
       description="Raised by the monitor when something needs a person to look."
       actions={<CardLink href="/activity">Activity</CardLink>}
     >
-      {incidents.loading ? (
-        <p className="text-body text-ink-muted">Loading…</p>
-      ) : mine.length === 0 ? (
+      <QueryStatus query={incidents} what="incidents" />
+      {incidents.data === undefined ? null : mine.length === 0 ? (
         <p className="text-body text-ink-secondary">No open incidents.</p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">

@@ -23,12 +23,14 @@ export const LARGE_SHARE_PERCENT = 10;
 export const VELOCITY_COUNT = 3;
 
 /**
- * @param history the protocol's events, any order (newest first is fine).
+ * @param history the protocol's events, any order (newest first is fine),
+ *   or null if they couldn't be read: then the flags that depend on history
+ *   are left out rather than guessed.
  */
 export function holdRiskFlags(
   hold: PendingWithdrawal,
   vaultBalance: U64 | null,
-  history: BreakglassEventRecord[],
+  history: BreakglassEventRecord[] | null,
 ): RiskFlag[] {
   const flags: RiskFlag[] = [];
 
@@ -45,6 +47,8 @@ export function holdRiskFlags(
       flags.push({ id: "share", label: `${share}% of the vault` });
     }
   }
+
+  if (history === null) return flags;
 
   // The owner's withdrawals (sent or held) up to and including this one.
   const owners = history.filter(

@@ -117,6 +117,19 @@ export class MockClient implements BreakglassClient {
     return this.wallet;
   }
 
+  private outage = false;
+
+  /** Whether reads are failing on purpose (the demo's outage switch). */
+  get simulatingOutage(): boolean {
+    return this.outage;
+  }
+
+  /** Make every read fail, to show what screens do when the network is down. */
+  setOutage(on: boolean): void {
+    this.outage = on;
+    this.notify();
+  }
+
   /** Act as another wallet (the demo's role switcher). */
   setWallet(address: Address | null): void {
     this.wallet = address;
@@ -194,6 +207,11 @@ export class MockClient implements BreakglassClient {
 
   private async read<T>(get: () => T): Promise<T> {
     await this.delay(0.3);
+    if (this.outage) {
+      throw clientError("Couldn't reach the network (simulated outage).", {
+        errorName: "NetworkUnavailable",
+      });
+    }
     return structuredClone(get());
   }
 

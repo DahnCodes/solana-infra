@@ -87,7 +87,7 @@ src/
 
 ## Current state (Nov 27 2026)
 
-- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `5.2 Transaction states`.
+- Branch `frontend` on `DahnCodes/solana-infra`. Last commit: `5.3 Loading, empty and error states`.
 - **0.1** to **0.4** done. The setup-check page at `/` lists the config, and a `.env.local` value overrides the defaults.
 - pnpm 12 refuses packages published less than 24 hours ago (`minimumReleaseAge`). Keep the policy; if a fresh version is needed, widen the range in `package.json` instead of adding an exclusion.
 - `next.config.ts` has `experimental.agentFeedback` on, so `next dev` appends a feedback block to `AGENTS.md`. The human chose to keep the setting, and the block is committed.
@@ -120,6 +120,7 @@ src/
 - **4.9** done: one rule for every action. `ActionButton` takes `relevant` (could this role ever do it here?): not relevant, hidden; relevant but not allowed now, disabled with the reason as visible text beside it (not a tooltip); allowed, enabled. Reasons come from `permissions.ts` (role matrix tested). `RoleBadge` in the top bar says "Acting as Admin / Guardian / User". Note: Next 16 (Cache Components) keeps previously visited pages in the DOM, hidden, so DOM queries in browser checks must ignore hidden routes.
 - **5.1** done: every write goes through `TxProvider` / `useTx().send()` (`src/components/tx/tx-provider.tsx`, in the `(app)` layout): a confirm dialog with a question, a plain one- or two-sentence summary, key details and "Your wallet will ask you to sign", then the write and a toast. `ActionButton` takes a `confirm` prop; the withdraw, deposit, claim, pause and propose forms call `send` directly; the withdraw confirmation repeats the gate's expected answer. The register flow's own review step is its summary. `useWrite` and the temporary `/mock` page and `PlannedScreen` were removed (every screen exists now). `signs: false` marks writes with nothing to sign (incident acknowledge).
 - **5.2** done: each write shows one toast that changes in place: pending (spinner, "Waiting for the network to confirm…", stays up), then confirmed (the outcome plus `TxLink`) or failed (the reason in words, "Nothing changed."). `TxLink` opens Solana Explorer in live mode (`src/lib/explorer.ts`, tested: devnet, mainnet, localnet via custom URL); in mock mode it shows the short signature marked "mock, not on chain" because mock signatures aren't on any explorer. `ToastProvider` gained `update`, `dismiss` and `persist`.
+- **5.3** done: every panel has loading, empty and error states. `useClientQuery` returns `retry`; `src/components/query-state.tsx` has `Skeleton`, `ErrorNote` (what failed, why, Try again), `QueryStatus` (skeleton, error, or "showing the last known data" note; pair with `query.data !== undefined && …`) and `QueryView`. `useChainClock()` exposes the clock read's error. Rule: an unread value is never shown as a default (no "Open" scopes, "0" balances or "first withdrawal" flags without data). `MockClient.setOutage(on)` makes every read fail; the sidebar's demo box has "Simulate an RPC outage" to show it.
 
 ## The checklist
 
@@ -155,7 +156,7 @@ The checklist was first written when the product was imagined as a vault that ho
 | 4.10 |        | "My vaults" list                                                                         | 4.4           | Lists what this wallet administers or guards                                   | Later    |
 | 5.1  | ✅     | Confirm dialog that says what a transaction will do before signing                       | 4.5           | Every write shows a plain-language summary first                               | Must     |
 | 5.2  | ✅     | Pending, confirmed and failed states with explorer links                                 | 5.1           | Each write shows its state and a link                                          | Must     |
-| 5.3  |        | Loading, empty and error states for every panel                                          | 4.9           | No panel is ever blank or stuck                                                | Must     |
+| 5.3  | ✅     | Loading, empty and error states for every panel                                          | 4.9           | No panel is ever blank or stuck                                                | Must     |
 | A    |        | **Checkpoint A:** program IDL, generated types, errors and events                        |               | The human confirms the IDL in `clients/ts/idl` covers the instructions we need | Must     |
 | 5.4  |        | Map program errors to readable messages                                                  | A             | Every program error has a message                                              | Must     |
 | B    |        | **Checkpoint B:** devnet program ID, test token mint, demo protocol config               |               | The human has shared the addresses                                             | Must     |

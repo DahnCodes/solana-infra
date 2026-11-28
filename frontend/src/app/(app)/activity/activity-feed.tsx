@@ -16,6 +16,7 @@ import { ActionButton } from "@/components/action-button";
 import { Badge, type Status } from "@/components/badge";
 import { Button } from "@/components/button";
 import { PageHeader } from "@/components/page-header";
+import { QueryStatus } from "@/components/query-state";
 import { Panel } from "@/components/panel";
 import {
   useConnectedWallet,
@@ -138,10 +139,17 @@ export function ActivityFeed() {
             </div>
           }
         >
-          {events.loading ? (
-            <p className="text-body text-ink-muted">Loading events…</p>
-          ) : items.length === 0 ? (
-            <p className="text-body text-ink-secondary">Nothing here yet.</p>
+          {protocol.data === undefined ? (
+            <QueryStatus query={protocol} what="the protocol" rows={6} />
+          ) : (
+            <QueryStatus query={events} what="events" rows={6} />
+          )}
+          {events.data === undefined ? null : items.length === 0 ? (
+            <p className="text-body text-ink-secondary">
+              {group === "all"
+                ? "Nothing has happened yet."
+                : "Nothing of this kind yet."}
+            </p>
           ) : (
             <ol className="flex flex-col divide-y divide-line">
               {items.map((r, i) => (
@@ -222,10 +230,11 @@ function IncidentsList() {
       title="Incidents"
       description="Raised by the monitor. Acknowledging tells others someone is on it."
     >
-      {incidents.loading ? (
-        <p className="text-body text-ink-muted">Loading incidents…</p>
-      ) : (incidents.data ?? []).length === 0 ? (
-        <p className="text-body text-ink-secondary">No incidents.</p>
+      <QueryStatus query={incidents} what="incidents" />
+      {incidents.data === undefined ? null : incidents.data.length === 0 ? (
+        <p className="text-body text-ink-secondary">
+          No incidents. The monitor opens one when something needs a person.
+        </p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {incidents.data!.map((i) => (
