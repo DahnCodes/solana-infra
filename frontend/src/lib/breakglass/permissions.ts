@@ -5,11 +5,21 @@
  * signed; the program still has the final say.
  */
 import type {
+  GuardianLedger,
+  PauseState,
   PendingConfig,
   PendingWithdrawal,
   ProtocolConfig,
 } from "./accounts.ts";
-import type { Address, UnixSeconds } from "./primitives.ts";
+import { RuleError } from "./errors.ts";
+import { BREAKGLASS_MESSAGES } from "./messages.ts";
+import type { Address, ScopeMask, Seconds, UnixSeconds } from "./primitives.ts";
+import {
+  applyPause,
+  applyRenew,
+  applyUnpause,
+  newLedger,
+} from "./rules/pauses.ts";
 
 export type Role = "admin" | "guardian" | "user";
 
@@ -88,6 +98,86 @@ export function canClaim(
     return no("Still in its hold.");
   }
   if (scopePaused) return no("Withdrawals are paused, so claims wait too.");
+  return yes;
+}
+
+// Pauses -----------------------------------------------------------------------------
+//
+// These run the program's own pause rules on copies of the accounts, so a
+// button says no for exactly the reasons the program would.
+
+type PauseContext = {
+  config: ProtocolConfig;
+  configAddress: Address;
+  state: PauseState;
+  /** The signer's ledger, or null if it has never paused. */
+  ledger: GuardianLedger | null;
+  wallet: Address | null;
+  now: UnixSeconds;
+};
+
+function simulate(
+  ctx: PauseContext,
+  run: (state: PauseState, ledger: GuardianLedger) => void,
+): Permission {
+  if (!ctx.wallet) return no(NO_WALLET);
+  const state = structuredClone(ctx.state);
+  const ledger = ctx.ledger
+    ? structuredClone(ctx.ledger)
+    : newLedger(ctx.configAddress, ctx.wallet, ctx.now);
+  try {
+    run(state, ledger);
+    return yes;
+  } catch (error) {
+    if (error instanceof RuleError) {
+      return no(BREAKGLASS_MESSAGES[error.errorName]);
+    }
+    throw error;
+  }
+}
+
+export function canPause(
+  ctx: PauseContext,
+  scopes: ScopeMask,
+  duration: Seconds,
+): Permission {
+  return simulate(ctx, (state, ledger) =>
+    applyPause(
+      state,
+      ledger,
+      ctx.config,
+      ctx.wallet!,
+      scopes,
+      duration,
+      0,
+      ctx.now,
+    ),
+  );
+}
+
+export function canRenew(ctx: PauseContext, scopes: ScopeMask): Permission {
+  return simulate(ctx, (state, ledger) =>
+    applyRenew(state, ledger, ctx.config, ctx.wallet!, scopes, ctx.now),
+  );
+}
+
+export function canUnpause(ctx: PauseContext, scopes: ScopeMask): Permission {
+  return simulate(ctx, (state) =>
+    applyUnpause(state, ctx.config, ctx.wallet!, scopes, ctx.now),
+  );
+}
+
+// Config -----------------------------------------------------------------------------
+
+export function canRemoveGuardian(role: Role | null): Permission {
+  if (!role) return no(NO_WALLET);
+  if (role !== "admin") return no("Only the admin can remove a guardian.");
+  return yes;
+}
+
+export function canPropose(role: Role | null): Permission {
+  if (!role) return no(NO_WALLET);
+  if (role !== "admin") return no("Only the admin can propose changes.");
   return yes;
 }
 

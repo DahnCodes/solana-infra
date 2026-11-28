@@ -6,8 +6,11 @@ import {
   canClaim,
   canExecute,
   canFreeze,
+  canPause,
   canProposeRelease,
   canReject,
+  canRenew,
+  canUnpause,
   canVeto,
   roleOf,
 } from "./permissions.ts";
@@ -92,6 +95,71 @@ describe("permissions", () => {
     );
     assert.equal(canVeto("guardian", change()).allowed, true);
     assert.equal(canVeto("admin", change()).allowed, false);
+  });
+});
+
+describe("pause permissions (the program's rules on copies)", () => {
+  const H = 3600;
+  const config = {
+    admin: "admin",
+    guardians: ["g"],
+    unpausableMask: BigInt(8),
+    policy: {
+      maxGuardianPauseSecs: 24 * H,
+      maxRenewals: 2,
+      cooldownSecs: 6 * H,
+      budgetSecsPerPeriod: 96 * H,
+      budgetPeriodSecs: 30 * 24 * H,
+      autoTripSecs: H,
+    },
+  } as never;
+  const state = {
+    bump: 255,
+    config: "c",
+    active: [
+      {
+        scope: 2,
+        pausedUntil: 10 * H,
+        pausedBy: "g",
+        kind: "guardian" as const,
+        renewals: 0,
+        reason: 0,
+      },
+    ],
+  };
+  const ledger = {
+    bump: 255,
+    config: "c",
+    guardian: "g",
+    periodStart: 0,
+    pauseSecsUsed: 6 * H,
+    lastPauseEnd: 10 * H,
+  };
+  const ctx = (wallet: string) => ({
+    config,
+    configAddress: "c",
+    state,
+    ledger: wallet === "g" ? ledger : null,
+    wallet,
+    now: 5 * H,
+  });
+
+  it("says why a guardian can't pause, and leaves the state alone", () => {
+    const p = canPause(ctx("g"), BigInt(2), H);
+    assert.deepEqual(p, {
+      allowed: false,
+      reason: "Guardian is cooling down.",
+    });
+    assert.equal(state.active.length, 1);
+    assert.equal(canPause(ctx("admin"), BigInt(2), 72 * H).allowed, true);
+    assert.equal(canPause(ctx("admin"), BigInt(8), H).allowed, false);
+  });
+
+  it("lets a guardian renew and lift only its own pause", () => {
+    assert.equal(canRenew(ctx("g"), BigInt(4)).allowed, true);
+    assert.equal(canUnpause(ctx("g"), BigInt(4)).allowed, true);
+    assert.equal(canUnpause(ctx("someone"), BigInt(4)).allowed, false);
+    assert.equal(canUnpause(ctx("admin"), BigInt(2)).allowed, false);
   });
 });
 

@@ -4,11 +4,10 @@ import { Snowflake, TriangleAlert, Undo2, Unlock } from "lucide-react";
 import { useState } from "react";
 import { Amount } from "@/components/amount";
 import { Badge, type Status } from "@/components/badge";
-import { Button } from "@/components/button";
+import { ActionButton } from "@/components/action-button";
 import { Countdown } from "@/components/countdown";
 import { PageHeader } from "@/components/page-header";
 import { Panel } from "@/components/panel";
-import { useToast } from "@/components/toast";
 import {
   roleOf,
   useChainNow,
@@ -22,24 +21,20 @@ import {
   useTokenBalance,
   type Role,
 } from "@/hooks/use-breakglass";
-import { useWrite } from "@/hooks/use-write";
 import type {
   AccountRecord,
   Address,
-  BreakglassClient,
   BreakglassEventRecord,
   HoldKind,
   PendingConfig,
   PendingWithdrawal,
 } from "@/lib/breakglass";
-import { isClientError } from "@/lib/breakglass/errors";
 import {
   canClaim,
   canExecute,
   canFreeze,
   canProposeRelease,
   canReject,
-  type Permission,
 } from "@/lib/breakglass/permissions";
 import { isScopePaused } from "@/lib/breakglass/rules/pauses";
 import { holdRiskFlags } from "@/lib/breakglass/risk";
@@ -64,21 +59,6 @@ const KIND: Record<HoldKind, string> = {
   limit: "Held at the cap",
   screen: "Held for screening",
 };
-
-/** Plain words for the failures here (5.4 covers the rest). */
-function explain(error: unknown): string {
-  if (!isClientError(error)) return "Something went wrong. Try again.";
-  const words: Record<string, string> = {
-    ScopePaused: "Withdrawals are paused, so claims wait too.",
-    HoldNotReleased: "It's still in its hold.",
-    HoldFrozen: "Frozen by the guardian: it can't be claimed.",
-    HoldInvalidState: "This hold has already moved on.",
-    Unauthorized: "Your wallet isn't allowed to do this.",
-    TimelockActive: "Still in the timelock.",
-    Vetoed: "The guardian vetoed it.",
-  };
-  return words[error.errorName ?? ""] ?? error.message;
-}
 
 /** Every held withdrawal, with its countdown, risk flags and what you can do. */
 export function WaitingRoom() {
@@ -314,14 +294,14 @@ function HoldRow({
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Action
+        <ActionButton
           label="Claim"
           done="Claimed"
           permission={canClaim(wallet, h, now, scopePaused)}
           hideWhenDenied
           run={(c) => c.claimHeld(args)}
         />
-        <Action
+        <ActionButton
           label="Freeze"
           done="Hold frozen"
           icon={<Snowflake aria-hidden className="size-4" />}
@@ -329,7 +309,7 @@ function HoldRow({
           hideWhenDenied
           run={(c) => c.freezeHeld(args)}
         />
-        <Action
+        <ActionButton
           label="Reject"
           done="Hold rejected: the funds are back in the position"
           icon={<Undo2 aria-hidden className="size-4" />}
@@ -337,7 +317,7 @@ function HoldRow({
           hideWhenDenied
           run={(c) => c.rejectHeld(args)}
         />
-        <Action
+        <ActionButton
           label="Release through the timelock"
           done="Release proposed"
           icon={<Unlock aria-hidden className="size-4" />}
@@ -350,7 +330,7 @@ function HoldRow({
           run={(c) => c.releaseHeld(args)}
         />
         {pendingRelease && (
-          <Action
+          <ActionButton
             label="Execute the release"
             done="Release executed: the hold can be claimed"
             permission={canExecute(wallet, pendingRelease.account, now)}
@@ -362,62 +342,5 @@ function HoldRow({
         )}
       </div>
     </li>
-  );
-}
-
-/** One write behind a permission check, with its pending state and toasts. */
-function Action({
-  label,
-  done,
-  icon,
-  permission,
-  hideWhenDenied = false,
-  run,
-}: {
-  label: string;
-  done: string;
-  icon?: React.ReactNode;
-  permission: Permission;
-  hideWhenDenied?: boolean;
-  run: (client: BreakglassClient) => Promise<unknown>;
-}) {
-  const toast = useToast();
-  const write = useWrite(run);
-  if (!permission.allowed && hideWhenDenied) return null;
-  return (
-    <Button
-      icon={icon}
-      pending={write.pending}
-      disabled={!permission.allowed}
-      title={permission.allowed ? undefined : permission.reason}
-      onClick={async () => {
-        try {
-          const result = await write.run();
-          const held =
-            result !== null &&
-            typeof result === "object" &&
-            "decision" in result &&
-            result.decision === "hold";
-          toast.show(
-            held
-              ? {
-                  tone: "held",
-                  title: "Not claimed yet",
-                  description:
-                    "Claiming now would cross the window's cap, so withdrawals paused. Try again once the window frees up.",
-                }
-              : { tone: "open", title: done },
-          );
-        } catch (error) {
-          toast.show({
-            tone: "tripped",
-            title: `${label} failed`,
-            description: explain(error),
-          });
-        }
-      }}
-    >
-      {label}
-    </Button>
   );
 }
