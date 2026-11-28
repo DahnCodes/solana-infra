@@ -1,6 +1,6 @@
 "use client";
 
-import { PenLine } from "lucide-react";
+import { ExternalLink, PenLine } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -18,6 +18,9 @@ import type { BreakglassClient } from "@/lib/breakglass";
 import { getBreakglassClient } from "@/lib/breakglass/create-client";
 import { isClientError } from "@/lib/breakglass/errors";
 import { messageFor } from "@/lib/breakglass/messages";
+import { env } from "@/lib/env";
+import { explorerTxUrl } from "@/lib/explorer";
+import { shortAddress } from "@/lib/format";
 
 /** What a failed write means, in words. */
 export function explainError(error: unknown): string {
@@ -93,24 +96,52 @@ export function TxProvider({ children }: { children: ReactNode }) {
       const confirmed = await ask(request as TxRequest<unknown>);
       if (!confirmed) return null;
       request.onStart?.();
+      // One toast per write, updated in place: pending, then confirmed or failed.
+      const id = toast.show(
+        {
+          tone: "pending",
+          title: `${request.confirmLabel}: sending`,
+          description:
+            request.signs === false
+              ? "Sending…"
+              : "Waiting for the network to confirm…",
+        },
+        { persist: true },
+      );
       try {
         const result = await request.run(getBreakglassClient());
-        toast.show(
+        const message =
           typeof request.done === "string"
-            ? { tone: "open", title: request.done }
+            ? ({ tone: "open", title: request.done } as ToastMessage)
             : typeof request.done === "function"
               ? request.done(result)
-              : request.done,
+              : request.done;
+        const signature = signatureOf(result);
+        toast.update(
+          id,
+          {
+            ...message,
+            action: signature ? (
+              <TxLink signature={signature} />
+            ) : (
+              message.action
+            ),
+          },
+          { durationMs: 10_000 },
         );
         return result;
       } catch (error) {
         const message = explainError(error);
         request.onError?.(message);
-        toast.show({
-          tone: "tripped",
-          title: `${request.confirmLabel} didn't go through`,
-          description: message,
-        });
+        toast.update(
+          id,
+          {
+            tone: "tripped",
+            title: `${request.confirmLabel} didn't go through`,
+            description: `${message} Nothing changed.`,
+          },
+          { durationMs: 10_000 },
+        );
         return null;
       }
     },
@@ -169,6 +200,42 @@ export function TxProvider({ children }: { children: ReactNode }) {
         )}
       </Dialog>
     </TxContext>
+  );
+}
+
+/** A write's transaction signature, when its result carries one. */
+function signatureOf(result: unknown): string | null {
+  return result !== null &&
+    typeof result === "object" &&
+    "signature" in result &&
+    typeof result.signature === "string"
+    ? result.signature
+    : null;
+}
+
+/**
+ * Where to see the transaction: Solana Explorer in live mode. Mock
+ * signatures aren't on chain, so they're shown as such instead of a link
+ * that would lead nowhere.
+ */
+export function TxLink({ signature }: { signature: string }) {
+  if (env.dataMode === "mock") {
+    return (
+      <span className="text-body text-ink-muted" title={signature}>
+        Signature {shortAddress(signature, 6)} (mock, not on chain)
+      </span>
+    );
+  }
+  return (
+    <a
+      href={explorerTxUrl(signature, env.cluster, env.rpcUrl)}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 text-body text-ink underline underline-offset-4"
+    >
+      View on Solana Explorer
+      <ExternalLink aria-hidden className="size-3.5" />
+    </a>
   );
 }
 

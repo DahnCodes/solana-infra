@@ -1,6 +1,13 @@
 "use client";
 
-import { CircleCheck, CircleX, Clock, Info, X } from "lucide-react";
+import {
+  CircleCheck,
+  CircleX,
+  Clock,
+  Info,
+  LoaderCircle,
+  X,
+} from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -12,7 +19,7 @@ import {
 } from "react";
 import { cx } from "@/lib/cx";
 
-export type ToastTone = "info" | "open" | "held" | "tripped";
+export type ToastTone = "info" | "pending" | "open" | "held" | "tripped";
 
 export type ToastMessage = {
   tone?: ToastTone;
@@ -24,6 +31,12 @@ export type ToastMessage = {
 
 const icons: Record<ToastTone, ReactNode> = {
   info: <Info aria-hidden className="size-5 text-ink-secondary" />,
+  pending: (
+    <LoaderCircle
+      aria-hidden
+      className="size-5 animate-spin text-ink-secondary"
+    />
+  ),
   open: <CircleCheck aria-hidden className="size-5 text-open" />,
   held: <Clock aria-hidden className="size-5 text-held" />,
   tripped: <CircleX aria-hidden className="size-5 text-tripped" />,
@@ -67,7 +80,20 @@ export function ToastCard({
   );
 }
 
-type ToastContextValue = { show: (message: ToastMessage) => void };
+export type ToastOptions = {
+  /** Stay until updated or dismissed (a transaction still in flight). */
+  persist?: boolean;
+  /** How long it stays otherwise, in ms. */
+  durationMs?: number;
+};
+
+type ToastContextValue = {
+  /** Shows a toast and returns its id. */
+  show: (message: ToastMessage, options?: ToastOptions) => number;
+  /** Replaces a toast's content in place, such as pending → confirmed. */
+  update: (id: number, message: ToastMessage, options?: ToastOptions) => void;
+  dismiss: (id: number) => void;
+};
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
@@ -78,21 +104,52 @@ const TOAST_MS = 6000;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<(ToastMessage & { id: number })[]>([]);
   const nextId = useRef(0);
+  const timers = useRef(new Map<number, number>());
 
   const dismiss = useCallback((id: number) => {
+    window.clearTimeout(timers.current.get(id));
+    timers.current.delete(id);
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
-  const show = useCallback(
-    (message: ToastMessage) => {
-      const id = nextId.current++;
-      setToasts((current) => [...current, { ...message, id }]);
-      window.setTimeout(() => dismiss(id), TOAST_MS);
+  const schedule = useCallback(
+    (id: number, options?: ToastOptions) => {
+      window.clearTimeout(timers.current.get(id));
+      if (options?.persist) return;
+      timers.current.set(
+        id,
+        window.setTimeout(() => dismiss(id), options?.durationMs ?? TOAST_MS),
+      );
     },
     [dismiss],
   );
 
-  const value = useMemo(() => ({ show }), [show]);
+  const show = useCallback(
+    (message: ToastMessage, options?: ToastOptions) => {
+      const id = nextId.current++;
+      setToasts((current) => [...current, { ...message, id }]);
+      schedule(id, options);
+      return id;
+    },
+    [schedule],
+  );
+
+  const update = useCallback(
+    (id: number, message: ToastMessage, options?: ToastOptions) => {
+      setToasts((current) =>
+        current.some((t) => t.id === id)
+          ? current.map((t) => (t.id === id ? { ...message, id } : t))
+          : [...current, { ...message, id }],
+      );
+      schedule(id, options);
+    },
+    [schedule],
+  );
+
+  const value = useMemo(
+    () => ({ show, update, dismiss }),
+    [show, update, dismiss],
+  );
 
   return (
     <ToastContext value={value}>
