@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   describeAction,
+  describeEvent,
   formatSpan,
   pauseKindLabel,
   scopeLabel,
@@ -40,6 +41,60 @@ describe("plain-words descriptions", () => {
         token,
       ),
       "Add HPQt…5Kht as a guardian",
+    );
+  });
+
+  it("describes events as sentences", () => {
+    const ctx = {
+      token,
+      who: (a: string) => (a === "ada" ? "Ada" : a),
+      hold: () => ({
+        amount: BigInt(250_000_000_000),
+        mint: "m",
+        owner: "ada",
+      }),
+      time: (t: number) => `t${t}`,
+    };
+    assert.equal(
+      describeEvent(
+        {
+          name: "paused",
+          data: {
+            config: "c",
+            scopesMask: BigInt(2),
+            pausedUntil: 9,
+            by: "g",
+            kind: 1,
+            reason: 1,
+          },
+        },
+        ctx,
+      ),
+      "The cap tripped: withdrawals paused until t9",
+    );
+    assert.equal(
+      describeEvent(
+        {
+          name: "largeWithdrawalQueued",
+          data: {
+            config: "c",
+            hold: "h",
+            mint: "m",
+            owner: "ada",
+            amount: BigInt(1_000_000),
+            releaseAt: 5,
+          },
+        },
+        ctx,
+      ),
+      "Held 1 USDC to Ada for size, until t5",
+    );
+    assert.equal(
+      describeEvent(
+        { name: "holdResolved", data: { config: "c", hold: "h", outcome: 2 } },
+        ctx,
+      ),
+      "The 250,000 USDC withdrawal to Ada was rejected; the funds went back to the position",
     );
   });
 

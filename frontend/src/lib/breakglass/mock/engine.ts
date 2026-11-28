@@ -201,6 +201,7 @@ export class MockEngine {
         signature,
         slot: this.slot,
         blockTime: ctx.now,
+        signer: ctx.signer,
       });
     }
     this.detectIncidents(events, signature, ctx.now);

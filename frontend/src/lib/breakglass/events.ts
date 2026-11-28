@@ -157,4 +157,10 @@ export type BreakglassEventRecord = {
   signature: Signature;
   slot: number;
   blockTime: UnixSeconds;
+  /**
+   * Who signed the transaction (its fee payer), so the feed can say who
+   * acted. Not part of the event itself: the live client reads it from the
+   * transaction; null if unknown.
+   */
+  signer: Address | null;
 };
